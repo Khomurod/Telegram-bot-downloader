@@ -14,13 +14,19 @@ if not os.path.exists(DOWNLOAD_DIR):
     os.makedirs(DOWNLOAD_DIR)
 
 def get_base_ydl_opts() -> dict:
-    return {
+    opts = {
         'quiet': True,
         'no_warnings': True,
         'outtmpl': os.path.join(DOWNLOAD_DIR, f'%(id)s_{uuid.uuid4().hex[:8]}.%(ext)s'),
         'noplaylist': True,
         'ffmpeg_location': imageio_ffmpeg.get_ffmpeg_exe(),
     }
+    
+    # Add cookie support to bypass YouTube Bot Protection on Render
+    if os.path.exists('cookies.txt'):
+        opts['cookiefile'] = 'cookies.txt'
+        
+    return opts
 
 async def extract_info(url: str) -> dict:
     """Extract metadata without downloading."""

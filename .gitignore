@@ -1,0 +1,6 @@
+*.pyc
+__pycache__/
+.env
+downloads/
+cookies.txt
+ytdlp_error.log
