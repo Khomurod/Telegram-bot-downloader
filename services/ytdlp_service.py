@@ -199,7 +199,7 @@ async def download_media(url: str, format_spec: str) -> dict:
                 )
                 if attempt_name == "primary" and opts.get("cookiefile"):
                     err_lower = str(e).lower()
-                    if "requested format is not available" in err_lower or "cookie" in err_lower:
+                    if "sign in" in err_lower or "cookie" in err_lower:
                         COOKIE_FILE_DISABLED = True
                         logger.warning(
                             f"Disabling cookie file for subsequent downloads due to failure: {opts.get('cookiefile')}"
