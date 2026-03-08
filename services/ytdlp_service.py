@@ -96,15 +96,15 @@ def _apply_format_opts(opts: dict, format_spec: str) -> None:
         }]
         return
 
-    # Specific resolution handling
+    # Specific resolution handling (prioritize mp4/m4a for Telegram compatibility)
     if format_spec == "1080p":
-        opts["format"] = "bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"
+        opts["format"] = "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"
     elif format_spec == "720p":
-        opts["format"] = "bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720]/best"
+        opts["format"] = "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/bestvideo[height<=720]+bestaudio/best[height<=720]/best"
     elif format_spec == "480p":
-        opts["format"] = "bestvideo[ext=mp4][height<=480]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best[height<=480]/best"
+        opts["format"] = "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480][ext=mp4]/bestvideo[height<=480]+bestaudio/best[height<=480]/best"
     else:
-        opts["format"] = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
+        opts["format"] = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/bestvideo+bestaudio/best"
 
     opts["merge_output_format"] = "mp4"
 
@@ -120,7 +120,6 @@ def get_base_ydl_opts() -> dict:
         'outtmpl': os.path.join(DOWNLOAD_DIR, f'%(id)s_{uuid.uuid4().hex[:8]}.%(ext)s'),
         'noplaylist': True,
         'ffmpeg_location': imageio_ffmpeg.get_ffmpeg_exe(),
-        'extractor_args': {'youtube': {'player_client': ['android', 'ios']}},
     }
 
     cookie_file = _get_cookie_file()
@@ -156,24 +155,25 @@ async def download_media(url: str, format_spec: str) -> dict:
     def _download():
         global COOKIE_FILE_DISABLED
 
+        # 1. Primary: Use cookies + default (web) client for max quality
         primary_opts = get_base_ydl_opts()
         _apply_format_opts(primary_opts, format_spec)
+        attempts = [("primary_web", primary_opts)]
 
-        attempts = [("primary", primary_opts)]
-
+        # 2. Fallback: Use cookies + android/ios clients if web is blocked (limited quality)
         if primary_opts.get("cookiefile"):
-            no_cookie_opts = copy.deepcopy(primary_opts)
-            no_cookie_opts.pop("cookiefile", None)
-            attempts.append(("without_cookie", no_cookie_opts))
-        else:
-            no_cookie_opts = copy.deepcopy(primary_opts)
+            mobile_opts = copy.deepcopy(primary_opts)
+            mobile_opts["extractor_args"] = {"youtube": {"player_client": ["android", "ios"]}}
+            attempts.append(("mobile_client_fallback", mobile_opts))
 
-        no_cookie_default_client = copy.deepcopy(no_cookie_opts)
-        no_cookie_default_client.pop("extractor_args", None)
-        attempts.append(("without_cookie_default_client", no_cookie_default_client))
+        # 3. Fallback: No cookies + default client
+        no_cookie_opts = copy.deepcopy(primary_opts)
+        no_cookie_opts.pop("cookiefile", None)
+        attempts.append(("no_cookie_fallback", no_cookie_opts))
 
+        # 4. Final Fallback: Non-specific format + no cookies
         if format_spec != "audio":
-            best_fallback = copy.deepcopy(no_cookie_default_client)
+            best_fallback = copy.deepcopy(no_cookie_opts)
             best_fallback["format"] = "best"
             best_fallback.pop("merge_output_format", None)
             attempts.append(("best_fallback", best_fallback))
