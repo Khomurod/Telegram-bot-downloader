@@ -4,3 +4,8 @@ __pycache__/
 downloads/
 cookies.txt
 ytdlp_error.log
+*.session
+*.session-journal
+bot_data.db
+out.txt
+test_out.txt
