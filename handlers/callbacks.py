@@ -1,17 +1,45 @@
 import os
 import re
+
 from pyrogram import Client, filters
 from pyrogram.types import CallbackQuery
-from services.ytdlp_service import download_media
-from services.queue_manager import check_rate_limit, record_download, acquire_lock, release_lock
+
 from services.db import log_download
+from services.queue_manager import (
+    acquire_lock,
+    check_rate_limit,
+    record_download,
+    release_lock,
+)
+from services.ytdlp_service import (
+    clear_cached_format_options,
+    download_media,
+    get_cached_format_option,
+)
 from utils.logger import logger
+
+LEGACY_FORMAT_SPECS = {"audio", "1080p", "720p", "480p"}
 
 
 @Client.on_callback_query(filters.regex(r"^dl\|"))
 async def handle_download_callback(client: Client, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
-    _, format_spec = callback_query.data.split("|")
+    _, selection_token = callback_query.data.split("|", 1)
+
+    selected_option = get_cached_format_option(
+        callback_query.message.chat.id,
+        callback_query.message.id,
+        selection_token,
+    )
+    if selected_option:
+        format_spec = selected_option["selector"]
+        log_format = selected_option["log_format"]
+    elif selection_token in LEGACY_FORMAT_SPECS:
+        format_spec = selection_token
+        log_format = selection_token
+    else:
+        await callback_query.answer("This selection has expired. Send the link again.", show_alert=True)
+        return
 
     original_message = callback_query.message.reply_to_message
     if not original_message or not original_message.text:
@@ -49,12 +77,12 @@ async def handle_download_callback(client: Client, callback_query: CallbackQuery
 
         if not filepath or not os.path.exists(filepath):
             if download_error:
-                logger.error(f"Download failed for {url} ({format_spec}): {download_error}")
+                logger.error(f"Download failed for {url} ({log_format}): {download_error}")
                 safe_reason = download_error.replace("\n", " ").strip()[:240]
                 await callback_query.message.edit_text(f"Download failed.\nReason: {safe_reason}")
             else:
                 await callback_query.message.edit_text("Download failed. Please try again.")
-            await log_download(user_id, url, format_spec, "FAILED")
+            await log_download(user_id, url, log_format, "FAILED")
             return
 
         await callback_query.message.edit_text("Uploading to Telegram...")
@@ -81,9 +109,10 @@ async def handle_download_callback(client: Client, callback_query: CallbackQuery
                     reply_to_message_id=original_message.id,
                 )
 
+        clear_cached_format_options(callback_query.message.chat.id, callback_query.message.id)
         await callback_query.message.delete()
         record_download(user_id)
-        await log_download(user_id, url, format_spec, "SUCCESS")
+        await log_download(user_id, url, log_format, "SUCCESS")
 
     except Exception as e:
         logger.error(f"Error processing download for {user_id}: {e}")
@@ -91,7 +120,7 @@ async def handle_download_callback(client: Client, callback_query: CallbackQuery
             await callback_query.message.edit_text("An error occurred during upload.")
         except Exception:
             pass
-        await log_download(user_id, url, format_spec, "ERROR")
+        await log_download(user_id, url, log_format, "ERROR")
     finally:
         release_lock()
         try:
