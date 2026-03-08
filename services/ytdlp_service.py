@@ -31,8 +31,16 @@ def get_base_ydl_opts() -> dict:
 async def extract_info(url: str) -> dict:
     """Extract metadata without downloading."""
     def _extract():
-        opts = get_base_ydl_opts()
-        opts['extract_flat'] = True
+        # Use an isolated, barebones options dict for info extraction
+        opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'extract_flat': True,
+            'ignore_no_formats_error': True, # Bypass "Requested format is not available"
+        }
+        if os.path.exists('cookies.txt'):
+            opts['cookiefile'] = 'cookies.txt'
+        
         try:
             with YoutubeDL(opts) as ydl:
                 return ydl.extract_info(url, download=False)
