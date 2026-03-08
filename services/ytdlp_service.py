@@ -52,13 +52,17 @@ async def download_media(url: str, format_spec: str) -> str:
             }]
         # Specific resolution handling
         elif format_spec == "1080p":
-            opts['format'] = 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best'
+            opts['format'] = 'bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4][height<=1080]/best[ext=mp4]/best'
+            opts['merge_output_format'] = 'mp4'
         elif format_spec == "720p":
-            opts['format'] = 'bestvideo[height<=720]+bestaudio/best[height<=720]/best'
+            opts['format'] = 'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4][height<=720]/best[ext=mp4]/best'
+            opts['merge_output_format'] = 'mp4'
         elif format_spec == "480p":
-            opts['format'] = 'bestvideo[height<=480]+bestaudio/best[height<=480]/best'
+            opts['format'] = 'bestvideo[ext=mp4][height<=480]+bestaudio[ext=m4a]/best[ext=mp4][height<=480]/best[ext=mp4]/best'
+            opts['merge_output_format'] = 'mp4'
         else:
-            opts['format'] = 'best' # Fallback
+            opts['format'] = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best' # Fallback
+            opts['merge_output_format'] = 'mp4'
             
         try:
             with YoutubeDL(opts) as ydl:
