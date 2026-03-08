@@ -24,8 +24,9 @@ async def handle_link(client: Client, message: Message):
     processing_msg = await message.reply_text("🔍 Analyzing link...", quote=True)
     
     info = await extract_info(url)
-    if not info:
-        await processing_msg.edit_text("❌ Sorry, I couldn't extract info from this link. It might be unsupported or private.")
+    if not info or "error" in info:
+        err_msg = info.get("error", "Unknown Error") if info else "No info returned"
+        await processing_msg.edit_text(f"❌ Sorry, I couldn't extract info from this link.\n\n**Error details:**\n`{err_msg[:800]}`")
         return
         
     title = info.get("title", 'Unknown Title')

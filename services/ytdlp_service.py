@@ -31,8 +31,10 @@ async def extract_info(url: str) -> dict:
             with YoutubeDL(opts) as ydl:
                 return ydl.extract_info(url, download=False)
         except Exception as e:
-            logger.error(f"Error extracting info for {url}: {e}")
-            return None
+            import traceback
+            err_msg = traceback.format_exc()
+            logger.error(f"Error extracting info for {url}: {e}\n{err_msg}")
+            return {"error": str(e), "traceback": err_msg}
             
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(executor, _extract)
