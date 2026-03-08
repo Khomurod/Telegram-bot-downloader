@@ -14,6 +14,7 @@ from services.queue_manager import (
 from services.ytdlp_service import (
     clear_cached_format_options,
     download_media,
+    get_video_metadata,
     get_cached_format_option,
 )
 from utils.logger import logger
@@ -95,9 +96,13 @@ async def handle_download_callback(client: Client, callback_query: CallbackQuery
             )
         else:
             try:
+                video_metadata = get_video_metadata(filepath)
                 await client.send_video(
                     chat_id=callback_query.message.chat.id,
                     video=filepath,
+                    duration=video_metadata.get("duration", 0),
+                    width=video_metadata.get("width", 0),
+                    height=video_metadata.get("height", 0),
                     supports_streaming=True,
                     reply_to_message_id=original_message.id,
                 )

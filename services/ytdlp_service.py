@@ -20,6 +20,7 @@ DOWNLOAD_DIR = os.path.join(BASE_DIR, "downloads")
 COOKIE_FILE = os.path.join(BASE_DIR, "cookies.txt")
 COOKIE_FILE_DISABLED = False
 FORMAT_CACHE_TTL_SECONDS = 3600
+ANALYSIS_CACHE_TTL_SECONDS = 600
 LEGACY_FORMAT_SPECS = {"1080p", "720p", "480p"}
 PREFERRED_VIDEO_EXTENSIONS = {
     "mp4": 3,
@@ -27,6 +28,7 @@ PREFERRED_VIDEO_EXTENSIONS = {
     "mov": 1,
 }
 FORMAT_SELECTION_CACHE = {}
+ANALYSIS_CACHE = {}
 
 if not os.path.exists(DOWNLOAD_DIR):
     os.makedirs(DOWNLOAD_DIR)
@@ -78,6 +80,32 @@ def _purge_format_cache() -> None:
     ]
     for key in expired_keys:
         FORMAT_SELECTION_CACHE.pop(key, None)
+
+
+def _purge_analysis_cache() -> None:
+    expires_before = time.monotonic() - ANALYSIS_CACHE_TTL_SECONDS
+    expired_keys = [
+        key for key, entry in ANALYSIS_CACHE.items()
+        if entry["created_at"] < expires_before
+    ]
+    for key in expired_keys:
+        ANALYSIS_CACHE.pop(key, None)
+
+
+def get_cached_analysis(url: str) -> dict | None:
+    _purge_analysis_cache()
+    entry = ANALYSIS_CACHE.get(url)
+    if not entry:
+        return None
+    return entry["info"]
+
+
+def cache_analysis(url: str, info: dict) -> None:
+    _purge_analysis_cache()
+    ANALYSIS_CACHE[url] = {
+        "created_at": time.monotonic(),
+        "info": info,
+    }
 
 
 def cache_format_options(chat_id: int, message_id: int, options: list[dict]) -> list[dict]:
@@ -158,6 +186,33 @@ def _resolve_output_path(info: dict, ydl: YoutubeDL, format_spec: str) -> str | 
             return os.path.abspath(matches[0])
 
     return _normalize_path(candidates[0] if candidates else None)
+
+
+def get_video_metadata(filepath: str) -> dict:
+    try:
+        frame_reader = imageio_ffmpeg.read_frames(filepath)
+        metadata = next(frame_reader)
+        frame_reader.close()
+    except Exception as e:
+        logger.warning(f"Failed to read video metadata for {filepath}: {e}")
+        return {}
+
+    width, height = metadata.get("size") or metadata.get("source_size") or (0, 0)
+    rotate = int(metadata.get("rotate") or 0)
+    if rotate in {90, 270, -90, -270}:
+        width, height = height, width
+
+    duration = metadata.get("duration") or 0
+    try:
+        duration_seconds = max(0, int(round(float(duration))))
+    except (TypeError, ValueError):
+        duration_seconds = 0
+
+    return {
+        "width": int(width or 0),
+        "height": int(height or 0),
+        "duration": duration_seconds,
+    }
 
 
 def _apply_format_opts(opts: dict, format_spec: str) -> None:
@@ -378,6 +433,10 @@ async def extract_info(url: str) -> dict:
     def _extract():
         global COOKIE_FILE_DISABLED
 
+        cached_info = get_cached_analysis(url)
+        if cached_info is not None:
+            return cached_info
+
         attempt_errors = []
         best_info = None
         best_video_count = -1
@@ -402,6 +461,9 @@ async def extract_info(url: str) -> dict:
                         logger.info(
                             f"Extraction attempt '{attempt_name}' returned no selectable video formats for {url}."
                         )
+                    else:
+                        cache_analysis(url, info)
+                        return info
             except Exception as e:
                 err_msg = traceback.format_exc()
                 logger.warning(
@@ -415,6 +477,7 @@ async def extract_info(url: str) -> dict:
                 attempt_errors.append(f"{attempt_name}: {e}")
 
         if best_info is not None:
+            cache_analysis(url, best_info)
             return best_info
 
         return {"error": " | ".join(attempt_errors)[:1000]}
