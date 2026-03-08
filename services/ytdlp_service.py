@@ -20,12 +20,8 @@ def get_base_ydl_opts() -> dict:
         'outtmpl': os.path.join(DOWNLOAD_DIR, f'%(id)s_{uuid.uuid4().hex[:8]}.%(ext)s'),
         'noplaylist': True,
         'ffmpeg_location': imageio_ffmpeg.get_ffmpeg_exe(),
+        'extractor_args': {'youtube': {'player_client': ['android', 'ios']}},
     }
-    
-    # Add cookie support to bypass YouTube Bot Protection on Render
-    if os.path.exists('cookies.txt'):
-        opts['cookiefile'] = 'cookies.txt'
-        
     return opts
 
 async def extract_info(url: str) -> dict:
@@ -38,8 +34,6 @@ async def extract_info(url: str) -> dict:
             'extract_flat': True,
             'ignore_no_formats_error': True, # Bypass "Requested format is not available"
         }
-        if os.path.exists('cookies.txt'):
-            opts['cookiefile'] = 'cookies.txt'
         
         try:
             with YoutubeDL(opts) as ydl:
