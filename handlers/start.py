@@ -1,13 +1,28 @@
 from pyrogram import Client, filters
 from pyrogram.types import Message
-from services.db import register_user
+
+from services.db import get_user_language, register_user
+from services.i18n import build_language_keyboard, build_welcome_message, t
 
 @Client.on_message(filters.command(["start", "help"]) & filters.private)
 async def start_command(client: Client, message: Message):
-    await register_user(message.from_user.id)
-    text = (
-        "👋 Welcome to the Downloader Bot!\n\n"
-        "Send me a link from YouTube, TikTok, Instagram, etc., and I'll download the video/audio for you.\n"
-        "Just paste the link to get started!"
+    user_id = message.from_user.id
+    await register_user(user_id)
+    language_code = await get_user_language(user_id)
+
+    await message.reply_text(
+        build_welcome_message(language_code),
+        reply_markup=build_language_keyboard(language_code),
     )
-    await message.reply_text(text)
+
+
+@Client.on_message(filters.command("language") & filters.private)
+async def language_command(client: Client, message: Message):
+    user_id = message.from_user.id
+    await register_user(user_id)
+    language_code = await get_user_language(user_id)
+
+    await message.reply_text(
+        t(language_code, "language_prompt"),
+        reply_markup=build_language_keyboard(language_code),
+    )

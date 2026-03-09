@@ -3,7 +3,8 @@ import re
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-from services.db import register_user
+from services.db import get_user_language, register_user
+from services.i18n import t
 from services.ytdlp_service import (
     build_download_options,
     cache_format_options,
@@ -14,9 +15,9 @@ from utils.logger import logger
 URL_REGEX = r"(https?://[^\s]+)"
 
 
-def format_duration(duration_seconds):
+def format_duration(duration_seconds, unknown_label: str):
     if not duration_seconds:
-        return "Unknown"
+        return unknown_label
 
     mins, secs = divmod(int(duration_seconds), 60)
     if mins >= 60:
@@ -50,36 +51,46 @@ def build_options_keyboard(options: list[dict]) -> InlineKeyboardMarkup:
 
 @Client.on_message(filters.regex(URL_REGEX) & filters.private)
 async def handle_link(client: Client, message: Message):
-    await register_user(message.from_user.id)
+    user_id = message.from_user.id
+    await register_user(user_id)
+    language_code = await get_user_language(user_id)
     url = re.search(URL_REGEX, message.text).group(0)
 
-    processing_msg = await message.reply_text("Analyzing link...", quote=True)
+    processing_msg = await message.reply_text(t(language_code, "analyzing_link"), quote=True)
 
     info = await extract_info(url)
     if not info or "error" in info:
-        err_msg = info.get("error", "Unknown error") if info else "No info returned"
+        logger.warning(
+            "Media extraction failed for user %s and URL %s: %s",
+            user_id,
+            url,
+            info.get("error", "No info returned") if info else "No info returned",
+        )
         await processing_msg.edit_text(
-            "Sorry, I couldn't extract info from this link.\n\n"
-            f"Error details:\n{err_msg[:800]}"
+            t(language_code, "extract_failed")
         )
         return
 
-    title = info.get("title", "Unknown Title")
-    duration = format_duration(info.get("duration", 0))
-    options = build_download_options(info)
+    title = info.get("title") or t(language_code, "unknown")
+    duration = format_duration(info.get("duration", 0), t(language_code, "unknown"))
+    options = build_download_options(
+        info,
+        unknown_label=t(language_code, "unknown"),
+        audio_label=t(language_code, "audio_mp3"),
+    )
     cached_options = cache_format_options(processing_msg.chat.id, processing_msg.id, options)
     keyboard = build_options_keyboard(cached_options)
 
     video_count = sum(1 for option in cached_options if option["kind"] == "video")
     if video_count:
-        prompt = "Choose one of the available formats below:"
+        prompt = t(language_code, "choose_format")
     else:
-        prompt = "Only audio is available for this link."
+        prompt = t(language_code, "audio_only")
 
     text = (
-        "Media found!\n\n"
-        f"Title: {title}\n"
-        f"Duration: {duration}\n\n"
+        f"{t(language_code, 'media_found')}\n\n"
+        f"{t(language_code, 'title_label')}: {title}\n"
+        f"{t(language_code, 'duration_label')}: {duration}\n\n"
         f"{prompt}"
     )
 

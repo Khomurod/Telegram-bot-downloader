@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 user_download_timestamps = {}
 MAX_CONCURRENT_DOWNLOADS = 2
 SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
+QUEUE_STATE_LOCK = asyncio.Lock()
 waiting_users = 0
 
 def check_rate_limit(user_id: int) -> bool:
@@ -36,21 +37,27 @@ async def acquire_lock(send_wait_message=None):
     """
     global waiting_users
     
-    # If semaphore is fully acquired (locked), we need to queue
-    if SEMAPHORE.locked():
-        waiting_users += 1
-        position = waiting_users
-        
+    position = 0
+
+    async with QUEUE_STATE_LOCK:
+        if SEMAPHORE.locked():
+            waiting_users += 1
+            position = waiting_users
+
+    if position:
         if send_wait_message:
             await send_wait_message(position)
-            
+
         await SEMAPHORE.acquire()
-        waiting_users -= 1
+
+        async with QUEUE_STATE_LOCK:
+            waiting_users = max(0, waiting_users - 1)
+
         return position
-    else:
-        # We can instantly acquire
-        await SEMAPHORE.acquire()
-        return 0
+
+    # We can instantly acquire.
+    await SEMAPHORE.acquire()
+    return 0
 
 def release_lock():
     """Release a download slot."""

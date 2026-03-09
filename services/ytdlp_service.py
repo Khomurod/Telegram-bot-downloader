@@ -279,7 +279,7 @@ def _collect_formats(info: dict) -> list[dict]:
     return formats
 
 
-def _format_resolution_label(fmt: dict) -> str:
+def _format_resolution_label(fmt: dict, unknown_label: str = "Unknown") -> str:
     height = fmt.get("height")
     if height:
         return f"{int(height)}p"
@@ -292,12 +292,12 @@ def _format_resolution_label(fmt: dict) -> str:
     if format_note:
         return format_note
 
-    return "Unknown"
+    return unknown_label
 
 
-def _build_video_label(fmt: dict) -> str:
+def _build_video_label(fmt: dict, unknown_label: str = "Unknown") -> str:
     ext = (fmt.get("ext") or "video").upper()
-    parts = [ext, _format_resolution_label(fmt)]
+    parts = [ext, _format_resolution_label(fmt, unknown_label=unknown_label)]
 
     fps = fmt.get("fps")
     if fps:
@@ -324,7 +324,11 @@ def _build_video_selector(fmt: dict) -> str | None:
     return f"{format_id}+bestaudio/best"
 
 
-def build_download_options(info: dict) -> list[dict]:
+def build_download_options(
+    info: dict,
+    unknown_label: str = "Unknown",
+    audio_label: str = "Audio (MP3)",
+) -> list[dict]:
     formats = _collect_formats(info)
     best_by_label = {}
 
@@ -339,9 +343,9 @@ def build_download_options(info: dict) -> list[dict]:
         ext = (fmt.get("ext") or "").lower()
         option = {
             "kind": "video",
-            "label": _build_video_label(fmt),
+            "label": _build_video_label(fmt, unknown_label=unknown_label),
             "selector": selector,
-            "log_format": _build_video_label(fmt),
+            "log_format": _build_video_label(fmt, unknown_label=unknown_label),
             "sort_height": int(fmt.get("height") or 0),
             "sort_fps": int(round(float(fmt.get("fps") or 0))),
             "sort_ext": PREFERRED_VIDEO_EXTENSIONS.get(ext, 0),
@@ -395,7 +399,7 @@ def build_download_options(info: dict) -> list[dict]:
 
     normalized_video_options.append({
         "kind": "audio",
-        "label": "Audio (MP3)",
+        "label": audio_label,
         "selector": "audio",
         "log_format": "audio",
     })
