@@ -65,6 +65,10 @@ TRANSLATIONS = {
             "Successful: `{success}`\n"
             "Failed: `{failed}`"
         ),
+        "quality_excellent": "🌟 Excellent Quality",
+        "quality_good": "👍 Good Quality",
+        "quality_bad": "📉 Bad Quality",
+        "more_options": "⬇️ More options",
     },
     "uz": {
         "welcome": (
@@ -121,6 +125,10 @@ TRANSLATIONS = {
             "Muvaffaqiyatli: `{success}`\n"
             "Xatolik: `{failed}`"
         ),
+        "quality_excellent": "🌟 Zo'r Sifat",
+        "quality_good": "👍 Yaxshi Sifat",
+        "quality_bad": "📉 Past Sifat",
+        "more_options": "⬇️ Ko'proq variantlar",
     },
     "ru": {
         "welcome": (
@@ -175,6 +183,10 @@ TRANSLATIONS = {
             "Успешно: `{success}`\n"
             "Не удалось: `{failed}`"
         ),
+        "quality_excellent": "🌟 Отличное качество",
+        "quality_good": "👍 Хорошее качество",
+        "quality_bad": "📉 Низкое качество",
+        "more_options": "⬇️ Больше вариантов",
     },
 }
 

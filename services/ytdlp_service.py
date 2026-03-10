@@ -148,6 +148,14 @@ def get_cached_format_option(chat_id: int, message_id: int, token: str) -> dict 
     return entry["options"].get(token)
 
 
+def get_all_cached_format_options(chat_id: int, message_id: int) -> list[dict] | None:
+    _purge_format_cache()
+    entry = FORMAT_SELECTION_CACHE.get((chat_id, message_id))
+    if not entry:
+        return None
+    return list(entry["options"].values())
+
+
 def clear_cached_format_options(chat_id: int, message_id: int) -> None:
     FORMAT_SELECTION_CACHE.pop((chat_id, message_id), None)
 

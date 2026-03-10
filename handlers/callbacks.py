@@ -23,8 +23,10 @@ from services.ytdlp_service import (
     download_media,
     get_video_metadata,
     get_cached_format_option,
+    get_all_cached_format_options,
 )
 from utils.logger import logger
+from handlers.downloader import build_options_keyboard
 
 LEGACY_FORMAT_SPECS = {"audio", "1080p", "720p", "480p"}
 
@@ -59,6 +61,28 @@ async def handle_language_callback(client: Client, callback_query: CallbackQuery
         )
     except Exception as e:
         logger.error(f"Failed to update language message for {user_id}: {e}")
+
+
+@Client.on_callback_query(filters.regex(r"^dl_more\|"))
+async def handle_more_options_callback(client: Client, callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    await register_user(user_id)
+    language_code = normalize_language_code(await get_user_language(user_id))
+    
+    options = get_all_cached_format_options(
+        callback_query.message.chat.id,
+        callback_query.message.id,
+    )
+    
+    if not options:
+        await callback_query.answer(t(language_code, "expired_selection"), show_alert=True)
+        return
+
+    keyboard = build_options_keyboard(options, language_code, show_all=True)
+    try:
+        await callback_query.message.edit_reply_markup(reply_markup=keyboard)
+    except Exception as e:
+        logger.error(f"Failed to expand options for {user_id}: {e}")
 
 
 @Client.on_callback_query(filters.regex(r"^dl\|"))
