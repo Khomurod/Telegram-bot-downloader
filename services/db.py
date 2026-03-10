@@ -1,6 +1,9 @@
+import os
+
 import aiosqlite
 
-DB_PATH = "bot_data.db"
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "bot_data.db")
+DB_PATH = os.path.abspath(DB_PATH)
 DEFAULT_LANGUAGE = "en"
 
 
