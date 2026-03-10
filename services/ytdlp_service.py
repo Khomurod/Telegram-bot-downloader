@@ -315,6 +315,11 @@ def _build_video_label(fmt: dict, unknown_label: str = "Unknown") -> str:
     dynamic_range = (fmt.get("dynamic_range") or "").strip()
     if dynamic_range and dynamic_range != "SDR":
         parts.append(dynamic_range)
+        
+    filesize = fmt.get("filesize") or fmt.get("filesize_approx")
+    if filesize:
+        mb_size = filesize / (1024 * 1024)
+        parts.append(f"(~{mb_size:.1f}MB)")
 
     return " ".join(parts)
 
@@ -428,6 +433,7 @@ def get_base_ydl_opts() -> dict:
         "continuedl": True,
         "outtmpl": os.path.join(DOWNLOAD_DIR, f"%(id)s_{uuid.uuid4().hex[:8]}.%(ext)s"),
         "noplaylist": True,
+        "writethumbnail": True,
         "ffmpeg_location": imageio_ffmpeg.get_ffmpeg_exe(),
         "filesize_max": MAX_FILESIZE_BYTES,
         "socket_timeout": SOCKET_TIMEOUT_SECONDS,
@@ -539,7 +545,15 @@ async def download_media(url: str, format_spec: str) -> dict:
                     filepath = _resolve_output_path(info, ydl, format_spec)
 
                     if filepath and os.path.exists(filepath):
-                        return {"filepath": filepath, "error": None}
+                        thumb_path = None
+                        base_name, _ = os.path.splitext(filepath)
+                        # yt-dlp usually writes thumbnails with the same base name but different extensions
+                        for ext in [".jpg", ".webp", ".png"]:
+                            possible_thumb = base_name + ext
+                            if os.path.exists(possible_thumb):
+                                thumb_path = possible_thumb
+                                break
+                        return {"filepath": filepath, "thumb": thumb_path, "error": None}
 
                     missing_msg = f"{attempt_name}: yt-dlp finished but no output file was found on disk."
                     attempt_errors.append(missing_msg)

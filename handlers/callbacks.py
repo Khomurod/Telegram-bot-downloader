@@ -113,9 +113,11 @@ async def handle_download_callback(client: Client, callback_query: CallbackQuery
         await callback_query.message.edit_text(t(language_code, "downloading_media"))
 
         result = await download_media(url, format_spec)
+        thumb_path = None
         if isinstance(result, dict):
             filepath = result.get("filepath")
             download_error = result.get("error")
+            thumb_path = result.get("thumb")
         else:
             filepath = result
 
@@ -128,11 +130,32 @@ async def handle_download_callback(client: Client, callback_query: CallbackQuery
 
         await callback_query.message.edit_text(t(language_code, "uploading_to_telegram"))
 
+        import time
+        from pyrogram.errors import MessageNotModified
+        
+        last_update_time = [0]
+        
+        async def progress_callback(current, total):
+            now = time.time()
+            # Update message at most once every 5 seconds to avoid flooding
+            if now - last_update_time[0] > 5:
+                last_update_time[0] = now
+                if total:
+                    percent = current * 100 / total
+                    try:
+                        await callback_query.message.edit_text(
+                            f"{t(language_code, 'uploading_to_telegram')}\n{percent:.1f}% ({current // 1048576}MB / {total // 1048576}MB)"
+                        )
+                    except MessageNotModified:
+                        pass
+
         if format_spec == "audio" or filepath.endswith(".mp3"):
             await client.send_audio(
                 chat_id=callback_query.message.chat.id,
                 audio=filepath,
+                thumb=thumb_path,
                 reply_to_message_id=original_message.id,
+                progress=progress_callback,
             )
         else:
             try:
@@ -140,18 +163,22 @@ async def handle_download_callback(client: Client, callback_query: CallbackQuery
                 await client.send_video(
                     chat_id=callback_query.message.chat.id,
                     video=filepath,
+                    thumb=thumb_path,
                     duration=video_metadata.get("duration", 0),
                     width=video_metadata.get("width", 0),
                     height=video_metadata.get("height", 0),
                     supports_streaming=True,
                     reply_to_message_id=original_message.id,
+                    progress=progress_callback,
                 )
             except Exception as e:
                 logger.warning(f"Failed to send as video: {e}, falling back to document.")
                 await client.send_document(
                     chat_id=callback_query.message.chat.id,
                     document=filepath,
+                    thumb=thumb_path,
                     reply_to_message_id=original_message.id,
+                    progress=progress_callback,
                 )
 
         clear_cached_format_options(callback_query.message.chat.id, callback_query.message.id)
@@ -171,5 +198,7 @@ async def handle_download_callback(client: Client, callback_query: CallbackQuery
         try:
             if filepath and os.path.exists(filepath):
                 os.remove(filepath)
+            if thumb_path and os.path.exists(thumb_path):
+                os.remove(thumb_path)
         except Exception as e:
-            logger.error(f"Error removing temp file {filepath}: {e}")
+            logger.error(f"Error removing temp files: {e}")

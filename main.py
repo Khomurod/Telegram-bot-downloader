@@ -5,22 +5,27 @@ import sys
 import threading
 
 from flask import Flask
-from pyrogram import Client
 
 from config import API_HASH, API_ID, BOT_TOKEN
 from services.db import init_db
 from utils.logger import logger
 
-# Automatically load handlers from the "handlers" package
-plugins = dict(root="handlers")
+# Deferred imports and pyrogram initialization
+app = None
 
-app = Client(
-    "downloader_bot",
-    bot_token=BOT_TOKEN,
-    api_id=API_ID,
-    api_hash=API_HASH,
-    plugins=plugins,
-)
+def get_app():
+    global app
+    if app is None:
+        from pyrogram import Client
+        plugins = dict(root="handlers")
+        app = Client(
+            "downloader_bot",
+            bot_token=BOT_TOKEN,
+            api_id=API_ID,
+            api_hash=API_HASH,
+            plugins=plugins,
+        )
+    return app
 
 
 def _start_health_server() -> None:
@@ -54,10 +59,10 @@ if __name__ == "__main__":
     # Graceful shutdown: stop the bot on SIGTERM (e.g. from Docker / Render).
     def _handle_sigterm(signum: int, frame: object) -> None:
         logger.info("Received SIGTERM – stopping bot...")
-        app.stop()
+        get_app().stop()
         sys.exit(0)
 
     signal.signal(signal.SIGTERM, _handle_sigterm)
 
     logger.info("Starting bot...")
-    app.run()
+    get_app().run()

@@ -19,6 +19,14 @@ TRANSLATIONS = {
             "the video/audio for you.\n"
             "Just paste the link to get started!"
         ),
+        "help_text": (
+            "🤖 **How to use Downloader Bot**\n\n"
+            "1. Copy a link to a video or audio from YouTube, TikTok, Instagram, etc.\n"
+            "2. Paste the link here and send it to me.\n"
+            "3. Choose the desired format and quality from the buttons.\n"
+            "4. Wait for the download to finish!\n\n"
+            "You can change the language anytime using /language."
+        ),
         "start_language_prompt": (
             "Choose the bot interface language below. "
             "English stays the default until you change it."
@@ -64,6 +72,14 @@ TRANSLATIONS = {
             "Menga YouTube, TikTok, Instagram va boshqa platformalardan havola yuboring, "
             "men siz uchun video yoki audioni yuklab beraman.\n"
             "Boshlash uchun havolani yuboring!"
+        ),
+        "help_text": (
+            "🤖 **Downloader Bot'dan qanday foydalanish kerak**\n\n"
+            "1. YouTube, TikTok, Instagram yoki boshqa tarmoqdan video/audio havolasini nusxalang.\n"
+            "2. Havolani shu yerga tashlang va menga yuboring.\n"
+            "3. Tugmalar yordamida kerakli format va sifatni tanlang.\n"
+            "4. Yuklab olinishini kuting!\n\n"
+            "Tilni xohlagan vaqtda /language yordamida o'zgartirishingiz mumkin."
         ),
         "start_language_prompt": (
             "Quyida bot interfeysi tilini tanlang. "
@@ -112,6 +128,14 @@ TRANSLATIONS = {
             "Отправьте мне ссылку с YouTube, TikTok, Instagram и других платформ, "
             "и я скачаю для вас видео или аудио.\n"
             "Просто отправьте ссылку, чтобы начать!"
+        ),
+        "help_text": (
+            "🤖 **Как использовать Downloader Bot**\n\n"
+            "1. Скопируйте ссылку на видео или аудио из YouTube, TikTok, Instagram и др.\n"
+            "2. Вставьте ссылку сюда и отправьте мне.\n"
+            "3. Выберите нужный формат и качество с помощью кнопок.\n"
+            "4. Дождитесь окончания загрузки!\n\n"
+            "Вы можете изменить язык в любое время с помощью команды /language."
         ),
         "start_language_prompt": (
             "Выберите язык интерфейса бота ниже. "
