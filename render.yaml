@@ -11,3 +11,5 @@ services:
         sync: false
       - key: API_HASH
         sync: false
+      - key: ADMIN_IDS
+        sync: false

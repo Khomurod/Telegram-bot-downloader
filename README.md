@@ -26,6 +26,7 @@ A simple, fast, and robust Telegram bot to download videos and audio from platfo
    pip install -r requirements.txt
    ```
 3. Set up the `.env` file:
+   - Copy `.env.example` to `.env`: `cp .env.example .env`
    - Provide your `BOT_TOKEN` from [@BotFather](https://t.me/BotFather)
    - Provide your `API_ID` and `API_HASH` from [my.telegram.org](https://my.telegram.org/auth)
    - *(Optional)* Add your numeric Telegram User ID to `ADMIN_IDS` to use `/stats` and `/broadcast`.

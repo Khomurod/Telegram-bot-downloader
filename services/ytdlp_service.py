@@ -3,6 +3,7 @@ import copy
 import glob
 import os
 import shutil
+import threading
 import time
 import traceback
 import uuid
@@ -18,7 +19,8 @@ executor = ThreadPoolExecutor(max_workers=2)
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DOWNLOAD_DIR = os.path.join(BASE_DIR, "downloads")
 COOKIE_FILE = os.path.join(BASE_DIR, "cookies.txt")
-COOKIE_FILE_DISABLED = False
+_COOKIE_FILE_DISABLED = False
+_COOKIE_FILE_LOCK = threading.Lock()
 FORMAT_CACHE_TTL_SECONDS = 3600
 ANALYSIS_CACHE_TTL_SECONDS = 600
 LEGACY_FORMAT_SPECS = {"1080p", "720p", "480p"}
@@ -29,15 +31,20 @@ PREFERRED_VIDEO_EXTENSIONS = {
 }
 FORMAT_SELECTION_CACHE = {}
 ANALYSIS_CACHE = {}
+# Telegram's maximum upload size via the client API (MTProto).  Files larger
+# than this cannot be sent and should be rejected before we waste bandwidth.
+MAX_FILESIZE_BYTES = 2000 * 1024 * 1024  # 2000 MiB ≈ Telegram client-API limit
+SOCKET_TIMEOUT_SECONDS = 120
 
 if not os.path.exists(DOWNLOAD_DIR):
     os.makedirs(DOWNLOAD_DIR)
 
 
 def _get_cookie_file() -> str | None:
-    global COOKIE_FILE_DISABLED
+    with _COOKIE_FILE_LOCK:
+        disabled = _COOKIE_FILE_DISABLED
 
-    if COOKIE_FILE_DISABLED:
+    if disabled:
         return None
 
     env_cookie = os.getenv("YTDLP_COOKIEFILE", "").strip()
@@ -422,6 +429,8 @@ def get_base_ydl_opts() -> dict:
         "outtmpl": os.path.join(DOWNLOAD_DIR, f"%(id)s_{uuid.uuid4().hex[:8]}.%(ext)s"),
         "noplaylist": True,
         "ffmpeg_location": imageio_ffmpeg.get_ffmpeg_exe(),
+        "filesize_max": MAX_FILESIZE_BYTES,
+        "socket_timeout": SOCKET_TIMEOUT_SECONDS,
     })
 
     cookie_file = _get_cookie_file()
@@ -435,7 +444,7 @@ async def extract_info(url: str) -> dict:
     """Extract metadata without downloading."""
 
     def _extract():
-        global COOKIE_FILE_DISABLED
+        global _COOKIE_FILE_DISABLED
 
         cached_info = get_cached_analysis(url)
         if cached_info is not None:
@@ -474,7 +483,8 @@ async def extract_info(url: str) -> dict:
                     f"Extraction attempt '{attempt_name}' failed for {url}: {e}\n{err_msg}"
                 )
                 if attempt_name == "primary_web" and opts.get("cookiefile") and _should_disable_cookies(e):
-                    COOKIE_FILE_DISABLED = True
+                    with _COOKIE_FILE_LOCK:
+                        _COOKIE_FILE_DISABLED = True
                     logger.warning(
                         f"Disabling cookie file for subsequent downloads due to failure: {opts.get('cookiefile')}"
                     )
@@ -494,7 +504,7 @@ async def download_media(url: str, format_spec: str) -> dict:
     """Download media and return {'filepath': str|None, 'error': str|None}."""
 
     def _download():
-        global COOKIE_FILE_DISABLED
+        global _COOKIE_FILE_DISABLED
 
         primary_opts = get_base_ydl_opts()
         _apply_format_opts(primary_opts, format_spec)
@@ -540,7 +550,8 @@ async def download_media(url: str, format_spec: str) -> dict:
                     f"Download attempt '{attempt_name}' failed for {url}: {e}\n{err_msg}"
                 )
                 if attempt_name == "primary_web" and opts.get("cookiefile") and _should_disable_cookies(e):
-                    COOKIE_FILE_DISABLED = True
+                    with _COOKIE_FILE_LOCK:
+                        _COOKIE_FILE_DISABLED = True
                     logger.warning(
                         f"Disabling cookie file for subsequent downloads due to failure: {opts.get('cookiefile')}"
                     )

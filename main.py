@@ -1,13 +1,13 @@
 import asyncio
+import os
+import signal
 import sys
+import threading
 
-try:
-    loop = asyncio.get_event_loop()
-except RuntimeError:
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+from flask import Flask
 from pyrogram import Client
-from config import BOT_TOKEN, API_ID, API_HASH
+
+from config import API_HASH, API_ID, BOT_TOKEN
 from services.db import init_db
 from utils.logger import logger
 
@@ -17,42 +17,47 @@ plugins = dict(root="handlers")
 app = Client(
     "downloader_bot",
     bot_token=BOT_TOKEN,
-    api_id=API_ID if API_ID else None,
-    api_hash=API_HASH if API_HASH else None,
-    plugins=plugins
+    api_id=API_ID,
+    api_hash=API_HASH,
+    plugins=plugins,
 )
+
+
+def _start_health_server() -> None:
+    """Run a minimal Flask health-check server in a background daemon thread."""
+    web_app = Flask(__name__)
+
+    @web_app.route("/")
+    def home():
+        return "Bot is running", 200
+
+    @web_app.route("/health")
+    def health():
+        return "OK", 200
+
+    port = int(os.environ.get("PORT", 8080))
+    # Use the built-in development server with threading disabled and
+    # reloader off so it does not spawn a child process inside the bot.
+    web_app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False, threaded=True)
+
 
 if __name__ == "__main__":
     logger.info("Initializing database...")
-    
-    # Try getting the event loop carefully to initialize the db
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     loop.run_until_complete(init_db())
-    
-    logger.info("Starting bot using native app.run()...")
-    if not API_ID or not API_HASH:
-        logger.warning("API_ID or API_HASH is missing! Pyrogram might fail to start if the local session needs them.")
-    
-    # Start a dummy web server in a background thread for Render
-    import threading
-    import os
-    from flask import Flask
-    
-    web_app = Flask(__name__)
-    
-    @web_app.route('/')
-    def home():
-        return "Bot is running"
-        
-    def run_web():
-        port = int(os.environ.get("PORT", 8080))
-        web_app.run(host="0.0.0.0", port=port)
-        
-    threading.Thread(target=run_web, daemon=True).start()
-    
+
+    logger.info("Starting health-check server...")
+    threading.Thread(target=_start_health_server, daemon=True).start()
+
+    # Graceful shutdown: stop the bot on SIGTERM (e.g. from Docker / Render).
+    def _handle_sigterm(signum: int, frame: object) -> None:
+        logger.info("Received SIGTERM – stopping bot...")
+        app.stop()
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, _handle_sigterm)
+
+    logger.info("Starting bot...")
     app.run()
