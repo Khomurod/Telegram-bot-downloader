@@ -1,3 +1,4 @@
+import asyncio
 import re
 
 from pyrogram import Client, filters
@@ -5,14 +6,11 @@ from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from services.db import get_user_language, register_user
 from services.i18n import t
-from services.ytdlp_service import (
-    build_download_options,
-    cache_format_options,
-    extract_info,
-)
+from services.ytdlp_service import build_download_options, cache_format_options, extract_info
 from utils.logger import logger
 
 URL_REGEX = r"(https?://[^\s]+)"
+MAX_VIDEO_OPTIONS = 8
 
 
 def format_duration(duration_seconds, unknown_label: str):
@@ -27,43 +25,37 @@ def format_duration(duration_seconds, unknown_label: str):
     return f"{mins}:{secs:02d}"
 
 
-def build_options_keyboard(options: list[dict], language_code: str, show_all: bool = False) -> InlineKeyboardMarkup:
-    rows = []
+def build_options_keyboard(options: list[dict], language_code: str) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
     video_options = [opt for opt in options if opt["kind"] == "video"]
     audio_options = [opt for opt in options if opt["kind"] == "audio"]
 
-    if len(video_options) > 4 and not show_all:
-        excellent_opt = video_options[0]
-        good_opt = video_options[len(video_options) // 2]
-        bad_opt = video_options[-1]
+    # Optional "best" shortcut if we have at least one video format.
+    if video_options:
+        best_opt = video_options[0]
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    t(language_code, "best_quality"),
+                    callback_data=f"dl|{best_opt['token']}",
+                )
+            ]
+        )
 
-        rows.append([InlineKeyboardButton(f"{t(language_code, 'quality_excellent')} ({excellent_opt['label']})", callback_data=f"dl|{excellent_opt['token']}")])
+    video_buttons = [
+        InlineKeyboardButton(option["label"], callback_data=f"dl|{option['token']}")
+        for option in video_options
+    ]
+    audio_buttons = [
+        InlineKeyboardButton(option["label"], callback_data=f"dl|{option['token']}")
+        for option in audio_options
+    ]
 
-        if good_opt['token'] != excellent_opt['token'] and good_opt['token'] != bad_opt['token']:
-            rows.append([InlineKeyboardButton(f"{t(language_code, 'quality_good')} ({good_opt['label']})", callback_data=f"dl|{good_opt['token']}")])
+    for index in range(0, len(video_buttons), 2):
+        rows.append(video_buttons[index : index + 2])
 
-        if bad_opt['token'] != excellent_opt['token']:
-            rows.append([InlineKeyboardButton(f"{t(language_code, 'quality_bad')} ({bad_opt['label']})", callback_data=f"dl|{bad_opt['token']}")])
-
-        for opt in audio_options:
-            rows.append([InlineKeyboardButton(opt["label"], callback_data=f"dl|{opt['token']}")])
-
-        rows.append([InlineKeyboardButton(t(language_code, "more_options"), callback_data="dl_more|")])
-    else:
-        video_buttons = [
-            InlineKeyboardButton(option["label"], callback_data=f"dl|{option['token']}")
-            for option in video_options
-        ]
-        audio_buttons = [
-            InlineKeyboardButton(option["label"], callback_data=f"dl|{option['token']}")
-            for option in audio_options
-        ]
-
-        for index in range(0, len(video_buttons), 2):
-            rows.append(video_buttons[index:index + 2])
-
-        for button in audio_buttons:
-            rows.append([button])
+    for button in audio_buttons:
+        rows.append([button])
 
     return InlineKeyboardMarkup(rows)
 
@@ -73,9 +65,37 @@ async def handle_link(client: Client, message: Message):
     user_id = message.from_user.id
     await register_user(user_id)
     language_code = await get_user_language(user_id)
-    url = re.search(URL_REGEX, message.text).group(0)
+    text = (message.text or message.caption or "").strip()
 
-    processing_msg = await message.reply_text(t(language_code, "analyzing_link"), quote=True)
+    match = re.search(URL_REGEX, text or "")
+    if not match:
+        await message.reply_text(
+            f"{t(language_code, 'no_url_found')}\n\n"
+            f"{t(language_code, 'send_link_example', example='https://youtu.be/dQw4w9WgXcQ')}",
+            quote=True,
+        )
+        return
+
+    url = match.group(0)
+
+    processing_msg = await message.reply_text(
+        t(language_code, "analyzing_link"),
+        quote=True,
+    )
+
+    analysis_done = {"value": False}
+
+    async def _slow_hint():
+        await asyncio.sleep(7)
+        if analysis_done["value"]:
+            return
+        try:
+            await processing_msg.edit_text(t(language_code, "analyzing_link_slow"))
+        except Exception:
+            # Message was likely already updated; ignore.
+            pass
+
+    asyncio.create_task(_slow_hint())
 
     info = await extract_info(url)
     if not info or "error" in info:
@@ -85,6 +105,7 @@ async def handle_link(client: Client, message: Message):
             url,
             info.get("error", "No info returned") if info else "No info returned",
         )
+        analysis_done["value"] = True
         await processing_msg.edit_text(
             t(language_code, "extract_failed")
         )
@@ -97,7 +118,17 @@ async def handle_link(client: Client, message: Message):
         unknown_label=t(language_code, "unknown"),
         audio_label=t(language_code, "audio_mp3"),
     )
-    cached_options = cache_format_options(processing_msg.chat.id, processing_msg.id, options)
+    # Limit the number of video options to keep the keyboard compact.
+    video_options = [opt for opt in options if opt["kind"] == "video"]
+    audio_options = [opt for opt in options if opt["kind"] == "audio"]
+    limited_video_options = video_options[:MAX_VIDEO_OPTIONS] if video_options else []
+    display_options = [*limited_video_options, *audio_options]
+
+    cached_options = cache_format_options(
+        processing_msg.chat.id,
+        processing_msg.id,
+        display_options,
+    )
     keyboard = build_options_keyboard(cached_options, language_code)
 
     video_count = sum(1 for option in cached_options if option["kind"] == "video")
@@ -106,14 +137,26 @@ async def handle_link(client: Client, message: Message):
     else:
         prompt = t(language_code, "audio_only")
 
-    text = (
-        f"{t(language_code, 'media_found')}\n\n"
-        f"{t(language_code, 'title_label')}: {title}\n"
-        f"{t(language_code, 'duration_label')}: {duration}\n\n"
-        f"{prompt}"
-    )
+    text_lines = [
+        t(language_code, "media_found"),
+        "",
+    ]
+    text_lines.append(f"{t(language_code, 'title_label')}: {title}")
+    text_lines.append(f"{t(language_code, 'duration_label')}: {duration}")
+
+    if video_count:
+        text_lines.append("")
+        text_lines.append(t(language_code, "formats_video_header"))
+        text_lines.append(prompt)
+
+    if any(opt["kind"] == "audio" for opt in cached_options):
+        text_lines.append("")
+        text_lines.append(t(language_code, "formats_audio_header"))
+
+    text = "\n".join(text_lines)
 
     try:
+        analysis_done["value"] = True
         await processing_msg.edit_text(text, reply_markup=keyboard)
     except Exception as e:
         logger.error(f"Error sending info: {e}")

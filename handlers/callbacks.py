@@ -12,12 +12,7 @@ from services.i18n import (
     normalize_language_code,
     t,
 )
-from services.queue_manager import (
-    acquire_lock,
-    check_rate_limit,
-    record_download,
-    release_lock,
-)
+from services.queue_manager import acquire_lock, record_download, release_lock, get_rate_limit_retry_after_seconds
 from services.ytdlp_service import (
     clear_cached_format_options,
     download_media,
@@ -26,7 +21,6 @@ from services.ytdlp_service import (
     get_all_cached_format_options,
 )
 from utils.logger import logger
-from handlers.downloader import build_options_keyboard
 
 LEGACY_FORMAT_SPECS = {"audio", "1080p", "720p", "480p"}
 
@@ -63,28 +57,6 @@ async def handle_language_callback(client: Client, callback_query: CallbackQuery
         logger.error(f"Failed to update language message for {user_id}: {e}")
 
 
-@Client.on_callback_query(filters.regex(r"^dl_more\|"))
-async def handle_more_options_callback(client: Client, callback_query: CallbackQuery):
-    user_id = callback_query.from_user.id
-    await register_user(user_id)
-    language_code = normalize_language_code(await get_user_language(user_id))
-    
-    options = get_all_cached_format_options(
-        callback_query.message.chat.id,
-        callback_query.message.id,
-    )
-    
-    if not options:
-        await callback_query.answer(t(language_code, "expired_selection"), show_alert=True)
-        return
-
-    keyboard = build_options_keyboard(options, language_code, show_all=True)
-    try:
-        await callback_query.message.edit_reply_markup(reply_markup=keyboard)
-    except Exception as e:
-        logger.error(f"Failed to expand options for {user_id}: {e}")
-
-
 @Client.on_callback_query(filters.regex(r"^dl\|"))
 async def handle_download_callback(client: Client, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
@@ -118,15 +90,20 @@ async def handle_download_callback(client: Client, callback_query: CallbackQuery
         return
     url = url_match.group(0)
 
-    if check_rate_limit(user_id):
-        await callback_query.answer(t(language_code, "rate_limit_exceeded"), show_alert=True)
+    retry_after = get_rate_limit_retry_after_seconds(user_id)
+    if retry_after > 0:
+        await callback_query.answer(
+            t(language_code, "rate_limit_exceeded_wait", seconds=retry_after),
+            show_alert=True,
+        )
         return
 
     await callback_query.answer()
 
     async def notify_queue(position):
         await callback_query.message.edit_text(
-            t(language_code, "queued", position=position)
+            f"{t(language_code, 'queued', position=position)}\n\n"
+            f"{t(language_code, 'queued_hint')}"
         )
 
     await acquire_lock(send_wait_message=notify_queue)
@@ -148,7 +125,13 @@ async def handle_download_callback(client: Client, callback_query: CallbackQuery
         if not filepath or not os.path.exists(filepath):
             if download_error:
                 logger.error(f"Download failed for {url} ({log_format}): {download_error}")
-            await callback_query.message.edit_text(t(language_code, "download_failed"))
+                error_lower = str(download_error).lower()
+                if "filesize" in error_lower or "too large" in error_lower:
+                    await callback_query.message.edit_text(t(language_code, "file_too_large"))
+                else:
+                    await callback_query.message.edit_text(t(language_code, "download_failed"))
+            else:
+                await callback_query.message.edit_text(t(language_code, "download_failed"))
             await log_download(user_id, url, log_format, "FAILED")
             return
 
@@ -156,19 +139,20 @@ async def handle_download_callback(client: Client, callback_query: CallbackQuery
 
         import time
         from pyrogram.errors import MessageNotModified
-        
+
         last_update_time = [0]
-        
+
         async def progress_callback(current, total):
             now = time.time()
-            # Update message at most once every 5 seconds to avoid flooding
-            if now - last_update_time[0] > 5:
+            # Update message at most once every 3 seconds to avoid flooding
+            if now - last_update_time[0] > 3:
                 last_update_time[0] = now
                 if total:
                     percent = current * 100 / total
                     try:
                         await callback_query.message.edit_text(
-                            f"{t(language_code, 'uploading_to_telegram')}\n{percent:.1f}% ({current // 1048576}MB / {total // 1048576}MB)"
+                            f"{t(language_code, 'uploading_to_telegram')}\n"
+                            f"{percent:.1f}% ({current // 1048576}MB / {total // 1048576}MB)"
                         )
                     except MessageNotModified:
                         pass
@@ -207,6 +191,14 @@ async def handle_download_callback(client: Client, callback_query: CallbackQuery
 
         clear_cached_format_options(callback_query.message.chat.id, callback_query.message.id)
         await callback_query.message.delete()
+        try:
+            await client.send_message(
+                chat_id=callback_query.message.chat.id,
+                text=t(language_code, "done_ready"),
+                reply_to_message_id=original_message.id,
+            )
+        except Exception:
+            pass
         record_download(user_id)
         await log_download(user_id, url, log_format, "SUCCESS")
 

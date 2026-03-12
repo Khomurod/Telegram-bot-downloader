@@ -8,21 +8,23 @@ SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
 QUEUE_STATE_LOCK = asyncio.Lock()
 waiting_users = 0
 
+def get_rate_limit_retry_after_seconds(user_id: int) -> int:
+    """Return how many seconds until the user can download again (0 if allowed)."""
+    now = datetime.now()
+    timestamps = user_download_timestamps.get(user_id, [])
+    timestamps = [t for t in timestamps if now - t < timedelta(minutes=1)]
+    user_download_timestamps[user_id] = timestamps
+
+    if len(timestamps) < 5:
+        return 0
+
+    oldest = min(timestamps)
+    retry_after = int((oldest + timedelta(minutes=1) - now).total_seconds())
+    return max(1, retry_after)
+
 def check_rate_limit(user_id: int) -> bool:
     """Check if the user has reached the 5 downloads / minute limit."""
-    now = datetime.now()
-    if user_id not in user_download_timestamps:
-        user_download_timestamps[user_id] = []
-    
-    # Prune timestamps older than 1 minute
-    user_download_timestamps[user_id] = [
-        t for t in user_download_timestamps[user_id] 
-        if now - t < timedelta(minutes=1)
-    ]
-    
-    if len(user_download_timestamps[user_id]) >= 5:
-        return True
-    return False
+    return get_rate_limit_retry_after_seconds(user_id) > 0
 
 def record_download(user_id: int):
     """Record a download action to affect the rate limit."""
