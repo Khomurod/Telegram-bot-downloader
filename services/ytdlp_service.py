@@ -258,7 +258,7 @@ def _should_disable_cookies(error: Exception) -> bool:
 
 
 def _get_extraction_attempts() -> list[tuple[str, dict]]:
-    opts = _apply_common_ydl_opts({
+    base_opts = _apply_common_ydl_opts({
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
@@ -266,19 +266,27 @@ def _get_extraction_attempts() -> list[tuple[str, dict]]:
     })
 
     cookie_file = _get_cookie_file()
-    if cookie_file:
-        opts["cookiefile"] = cookie_file
 
-    attempts = [("primary_web", opts)]
-
-    android_opts = copy.deepcopy(opts)
-    android_opts.pop("cookiefile", None)
+    # Try android client FIRST — YouTube Shorts work reliably with it,
+    # while the web extractor often returns 0 video formats for Shorts.
+    android_opts = copy.deepcopy(base_opts)
     android_opts["extractor_args"] = {"youtube": {"player_client": ["android"]}}
-    attempts.append(("android_client_fallback", android_opts))
+    attempts = [("android_client", android_opts)]
 
-    no_cookie_opts = copy.deepcopy(opts)
-    no_cookie_opts.pop("cookiefile", None)
-    attempts.append(("no_cookie_fallback", no_cookie_opts))
+    # iOS client as second option — another mobile client that bypasses Shorts restrictions.
+    ios_opts = copy.deepcopy(base_opts)
+    ios_opts["extractor_args"] = {"youtube": {"player_client": ["ios"]}}
+    attempts.append(("ios_client", ios_opts))
+
+    # Web with cookies as third — may work for non-Shorts content.
+    web_opts = copy.deepcopy(base_opts)
+    if cookie_file:
+        web_opts["cookiefile"] = cookie_file
+    attempts.append(("web_with_cookies", web_opts))
+
+    # Web without cookies as last resort.
+    web_no_cookie_opts = copy.deepcopy(base_opts)
+    attempts.append(("web_no_cookies", web_no_cookie_opts))
 
     return attempts
 
@@ -515,23 +523,33 @@ async def extract_info(url: str) -> dict:
 
 
 async def download_media(url: str, format_spec: str) -> dict:
-    """Download media and return {'filepath': str|None, 'error': str|None}."""
+    """Download media and return {'filepath': str|None, 'error': str|None}"""
 
     def _download():
         global _COOKIE_FILE_DISABLED
 
-        primary_opts = get_base_ydl_opts()
-        _apply_format_opts(primary_opts, format_spec)
-        attempts = [("primary_web", primary_opts)]
+        base_opts = get_base_ydl_opts()
+        _apply_format_opts(base_opts, format_spec)
 
-        android_opts = copy.deepcopy(primary_opts)
+        # Android client first — works reliably for YouTube Shorts.
+        android_opts = copy.deepcopy(base_opts)
         android_opts.pop("cookiefile", None)
         android_opts["extractor_args"] = {"youtube": {"player_client": ["android"]}}
-        attempts.append(("android_client_fallback", android_opts))
+        attempts = [("android_client", android_opts)]
 
-        no_cookie_opts = copy.deepcopy(primary_opts)
+        # iOS client as second option.
+        ios_opts = copy.deepcopy(base_opts)
+        ios_opts.pop("cookiefile", None)
+        ios_opts["extractor_args"] = {"youtube": {"player_client": ["ios"]}}
+        attempts.append(("ios_client", ios_opts))
+
+        # Web with cookies third.
+        attempts.append(("web_with_cookies", base_opts))
+
+        # Web without cookies.
+        no_cookie_opts = copy.deepcopy(base_opts)
         no_cookie_opts.pop("cookiefile", None)
-        attempts.append(("no_cookie_fallback", no_cookie_opts))
+        attempts.append(("web_no_cookies", no_cookie_opts))
 
         if format_spec not in LEGACY_FORMAT_SPECS and format_spec != "audio":
             exact_selector = True
@@ -571,7 +589,7 @@ async def download_media(url: str, format_spec: str) -> dict:
                 logger.warning(
                     f"Download attempt '{attempt_name}' failed for {url}: {e}\n{err_msg}"
                 )
-                if attempt_name == "primary_web" and opts.get("cookiefile") and _should_disable_cookies(e):
+                if attempt_name == "web_with_cookies" and opts.get("cookiefile") and _should_disable_cookies(e):
                     with _COOKIE_FILE_LOCK:
                         _COOKIE_FILE_DISABLED = True
                     logger.warning(
