@@ -8,6 +8,7 @@ import time
 import traceback
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import parse_qs, urlparse
 
 import imageio_ffmpeg
 from yt_dlp import YoutubeDL
@@ -113,6 +114,27 @@ def cache_analysis(url: str, info: dict) -> None:
         "created_at": time.monotonic(),
         "info": info,
     }
+
+
+def _canonicalize_url(url: str) -> str:
+    try:
+        parsed = urlparse(url)
+        host = (parsed.netloc or "").lower()
+
+        if host.endswith("youtu.be"):
+            video_id = (parsed.path or "").strip("/")
+            if video_id:
+                return f"https://www.youtube.com/watch?v={video_id}"
+
+        if host.endswith("youtube.com"):
+            query = parse_qs(parsed.query or "")
+            video_id = (query.get("v") or [""])[0]
+            if video_id:
+                return f"https://www.youtube.com/watch?v={video_id}"
+    except Exception:
+        pass
+
+    return url.split("#", 1)[0]
 
 
 def cache_format_options(chat_id: int, message_id: int, options: list[dict]) -> list[dict]:
@@ -428,12 +450,26 @@ def build_download_options(
     # Some sources (notably YouTube in certain sessions) may hide format lists
     # while still allowing direct "best" downloads. Offer a safe video fallback.
     if not normalized_video_options:
-        normalized_video_options.append({
-            "kind": "video",
-            "label": "MP4 (best available)",
-            "selector": "best",
-            "log_format": "best",
-        })
+        normalized_video_options.extend([
+            {
+                "kind": "video",
+                "label": "Best quality",
+                "selector": "best",
+                "log_format": "best",
+            },
+            {
+                "kind": "video",
+                "label": "Good quality",
+                "selector": "720p",
+                "log_format": "720p",
+            },
+            {
+                "kind": "video",
+                "label": "Low quality",
+                "selector": "480p",
+                "log_format": "480p",
+            },
+        ])
 
     normalized_video_options.append({
         "kind": "audio",
@@ -477,8 +513,9 @@ async def extract_info(url: str) -> dict:
 
     def _extract():
         global _COOKIE_FILE_DISABLED
+        canonical_url = _canonicalize_url(url)
 
-        cached_info = get_cached_analysis(url)
+        cached_info = get_cached_analysis(canonical_url)
         if cached_info is not None:
             return cached_info
 
@@ -506,8 +543,18 @@ async def extract_info(url: str) -> dict:
                         logger.info(
                             f"Extraction attempt '{attempt_name}' returned no selectable video formats for {url}."
                         )
+
+                        # Return early when we already have usable metadata.
+                        # This avoids waiting for all fallback clients on links
+                        # where providers intentionally hide detailed format lists.
+                        has_core_metadata = bool(
+                            info.get("id") and (info.get("title") or info.get("webpage_url"))
+                        )
+                        if has_core_metadata and attempt_name in {"android_client", "ios_client"}:
+                            cache_analysis(canonical_url, info)
+                            return info
                     else:
-                        cache_analysis(url, info)
+                        cache_analysis(canonical_url, info)
                         return info
             except Exception as e:
                 err_msg = traceback.format_exc()
@@ -523,7 +570,7 @@ async def extract_info(url: str) -> dict:
                 attempt_errors.append(f"{attempt_name}: {e}")
 
         if best_info is not None:
-            cache_analysis(url, best_info)
+            cache_analysis(canonical_url, best_info)
             return best_info
 
         return {"error": " | ".join(attempt_errors)[:1000]}

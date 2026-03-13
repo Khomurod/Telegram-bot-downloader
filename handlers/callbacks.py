@@ -21,8 +21,33 @@ from services.ytdlp_service import (
     get_all_cached_format_options,
 )
 from utils.logger import logger
+from handlers.downloader import build_options_keyboard
 
 LEGACY_FORMAT_SPECS = {"audio", "1080p", "720p", "480p"}
+
+
+@Client.on_callback_query(filters.regex(r"^opt\|more$"))
+async def handle_more_options_callback(client: Client, callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    await register_user(user_id)
+    language_code = normalize_language_code(await get_user_language(user_id))
+
+    options = get_all_cached_format_options(
+        callback_query.message.chat.id,
+        callback_query.message.id,
+    )
+    if not options:
+        await callback_query.answer(t(language_code, "expired_selection"), show_alert=True)
+        return
+
+    try:
+        await callback_query.message.edit_reply_markup(
+            build_options_keyboard(options, language_code, expanded=True)
+        )
+        await callback_query.answer()
+    except Exception as e:
+        logger.error(f"Failed to expand options for user {user_id}: {e}")
+        await callback_query.answer(t(language_code, "upload_error"), show_alert=True)
 
 
 @Client.on_callback_query(filters.regex(r"^lang\|"))

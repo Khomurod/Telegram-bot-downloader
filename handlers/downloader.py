@@ -10,7 +10,7 @@ from services.ytdlp_service import build_download_options, cache_format_options,
 from utils.logger import logger
 
 URL_REGEX = r"(https?://[^\s]+)"
-MAX_VIDEO_OPTIONS = 8
+COMPACT_VIDEO_TIERS = 3
 
 
 def format_duration(duration_seconds, unknown_label: str):
@@ -25,37 +25,84 @@ def format_duration(duration_seconds, unknown_label: str):
     return f"{mins}:{secs:02d}"
 
 
-def build_options_keyboard(options: list[dict], language_code: str) -> InlineKeyboardMarkup:
+def _pick_compact_video_options(video_options: list[dict]) -> list[dict]:
+    if len(video_options) <= COMPACT_VIDEO_TIERS:
+        return video_options
+
+    candidate_indexes = [0, len(video_options) // 2, len(video_options) - 1]
+    selected: list[dict] = []
+    seen_tokens: set[str] = set()
+
+    for index in candidate_indexes:
+        option = video_options[index]
+        token = option["token"]
+        if token in seen_tokens:
+            continue
+        selected.append(option)
+        seen_tokens.add(token)
+
+    if len(selected) >= COMPACT_VIDEO_TIERS:
+        return selected[:COMPACT_VIDEO_TIERS]
+
+    for option in video_options:
+        token = option["token"]
+        if token in seen_tokens:
+            continue
+        selected.append(option)
+        seen_tokens.add(token)
+        if len(selected) == COMPACT_VIDEO_TIERS:
+            break
+
+    return selected
+
+
+def build_options_keyboard(options: list[dict], language_code: str, expanded: bool = False) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     video_options = [opt for opt in options if opt["kind"] == "video"]
     audio_options = [opt for opt in options if opt["kind"] == "audio"]
 
-    # Optional "best" shortcut for multi-option video lists.
-    if len(video_options) > 1:
-        best_opt = video_options[0]
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    t(language_code, "best_quality"),
-                    callback_data=f"dl|{best_opt['token']}",
-                )
-            ]
-        )
+    compact_video_options = _pick_compact_video_options(video_options)
+    displayed_video_options = video_options if expanded else compact_video_options
 
-    video_buttons = [
-        InlineKeyboardButton(option["label"], callback_data=f"dl|{option['token']}")
-        for option in video_options
-    ]
+    if expanded:
+        video_buttons = [
+            InlineKeyboardButton(option["label"], callback_data=f"dl|{option['token']}")
+            for option in displayed_video_options
+        ]
+    else:
+        tier_keys = ["quality_excellent", "quality_good", "quality_bad"]
+        video_buttons = []
+        for index, option in enumerate(displayed_video_options):
+            tier_key = tier_keys[min(index, len(tier_keys) - 1)]
+            video_buttons.append(
+                InlineKeyboardButton(
+                    t(language_code, tier_key),
+                    callback_data=f"dl|{option['token']}",
+                )
+            )
+
     audio_buttons = [
         InlineKeyboardButton(option["label"], callback_data=f"dl|{option['token']}")
         for option in audio_options
     ]
 
-    for index in range(0, len(video_buttons), 2):
-        rows.append(video_buttons[index : index + 2])
+    if expanded:
+        for index in range(0, len(video_buttons), 2):
+            rows.append(video_buttons[index : index + 2])
+    else:
+        for button in video_buttons:
+            rows.append([button])
 
     for button in audio_buttons:
         rows.append([button])
+
+    if not expanded and len(video_options) > len(displayed_video_options):
+        rows.append([
+            InlineKeyboardButton(
+                t(language_code, "more_options"),
+                callback_data="opt|more",
+            )
+        ])
 
     return InlineKeyboardMarkup(rows)
 
@@ -118,18 +165,12 @@ async def handle_link(client: Client, message: Message):
         unknown_label=t(language_code, "unknown"),
         audio_label=t(language_code, "audio_mp3"),
     )
-    # Limit the number of video options to keep the keyboard compact.
-    video_options = [opt for opt in options if opt["kind"] == "video"]
-    audio_options = [opt for opt in options if opt["kind"] == "audio"]
-    limited_video_options = video_options[:MAX_VIDEO_OPTIONS] if video_options else []
-    display_options = [*limited_video_options, *audio_options]
-
     cached_options = cache_format_options(
         processing_msg.chat.id,
         processing_msg.id,
-        display_options,
+        options,
     )
-    keyboard = build_options_keyboard(cached_options, language_code)
+    keyboard = build_options_keyboard(cached_options, language_code, expanded=False)
 
     video_count = sum(1 for option in cached_options if option["kind"] == "video")
     if video_count:
