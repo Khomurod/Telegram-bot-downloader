@@ -1,43 +1,87 @@
 # Telegram Downloader Bot
 
-A simple, fast, and robust Telegram bot to download videos and audio from platforms like YouTube, TikTok, Instagram, and more using `yt-dlp` and `pyrogram`.
+A Telegram bot for downloading video and audio from YouTube, TikTok, Instagram, Twitter/X, and other sites supported by yt-dlp. It uses Pyrogram for Telegram delivery, offers compact quality buttons by default, and can expand to show the full list of available formats.
 
 ## Features
-- **Support for multiple platforms:** YouTube, TikTok, Instagram, Twitter/X, and more.
-- **Dynamic Format Options:** The bot inspects each link and shows the video formats and qualities that yt-dlp reports as available, plus Audio (MP3).
-- **Large File Support:** Can upload files up to 2 GB via Telegram Client API (`Pyrogram`).
-- **Resource Efficient:** CPU usage limited through a concurrent download queue (max 2 simultaneously).
-- **Rate Limit:** Prevents spam (limit of 5 downloads per minute per user).
-- **Admin Commands:** Track statistics with `/stats` and message all users with `/broadcast`.
-- **Zero Clutter:** Automatically cleans up temporary files after sending.
+- Supports multiple platforms through yt-dlp.
+- Multi-language interface: English, Russian, and Uzbek.
+- Compact format picker: users first see `Best`, `Good`, `Bad`, and `Audio (MP3)`.
+- Expanded format picker: tapping `More options` reveals all detected video formats.
+- Fallback video choices for links where yt-dlp returns metadata but hides detailed format lists.
+- Uploads files up to Telegram's client API limit of about 2 GB.
+- Simple queueing with up to 2 concurrent downloads.
+- Per-user rate limit of 5 downloads per minute.
+- Admin-only `/stats` and `/broadcast` commands.
+- Automatic cleanup of downloaded files and thumbnails after sending.
+- In-memory analysis caching to speed up repeated requests for the same link.
 
-## Prerequisites
-1. **Python 3.10+**
-2. **FFmpeg**: Required by `yt-dlp` for extracting audio and merging video formats.
-   - For Windows: Download from `https://gyan.dev/ffmpeg/builds/` and add to your System PATH.
-   - For Linux: `sudo apt install ffmpeg`
-3. **Node.js**: Recommended for full YouTube format detection with modern `yt-dlp` challenge solving.
+## User Flow
+1. Send a supported media link in a private chat.
+2. The bot analyzes the link and shows title and duration.
+3. The first keyboard shows a compact set of actions:
+   - `Best`
+   - `Good`
+   - `Bad`
+   - `Audio (MP3)`
+   - `More options` when extra video formats are available
+4. If the user taps `More options`, the bot replaces the compact keyboard with the full list of available video formats.
+5. After the user chooses an option, the bot downloads the media and uploads it back to Telegram.
+
+## Commands
+- `/start` - show the welcome message and language selector
+- `/help` - show usage instructions
+- `/language` - change bot language
+- `/stats` - admin only
+- `/broadcast` - admin only, must be used as a reply to a message
+
+## Requirements
+1. Python 3.10+
+2. FFmpeg
+   - Linux: `sudo apt install ffmpeg`
+   - Windows: install FFmpeg and add it to `PATH`
+3. Node.js is recommended for better YouTube extraction reliability with modern yt-dlp JS challenge handling
 
 ## Installation
+1. Clone the repository.
+2. Install dependencies:
 
-1. Clone or copy the project files to your server/computer.
-2. Install the required python packages:
-   ```bash
-   pip install -r requirements.txt
-   ```
-3. Set up the `.env` file:
-   - Copy `.env.example` to `.env`: `cp .env.example .env`
-   - Provide your `BOT_TOKEN` from [@BotFather](https://t.me/BotFather)
-   - Provide your `API_ID` and `API_HASH` from [my.telegram.org](https://my.telegram.org/auth)
-   - *(Optional)* Add your numeric Telegram User ID to `ADMIN_IDS` to use `/stats` and `/broadcast`.
+```bash
+pip install -r requirements.txt
+```
 
-## Running the Bot
+3. Create your environment file:
 
-Run the bot directly via:
+```bash
+cp .env.example .env
+```
+
+4. Fill in these values in `.env`:
+- `BOT_TOKEN` from [@BotFather](https://t.me/BotFather)
+- `API_ID` and `API_HASH` from [my.telegram.org](https://my.telegram.org/auth)
+- `ADMIN_IDS` as a comma-separated list of numeric Telegram user IDs for admin commands
+- `YTDLP_COOKIEFILE` optionally, if you want yt-dlp to use an external cookies file for authenticated or restricted downloads
+
+## Running Locally
+Start the bot with:
+
 ```bash
 python main.py
 ```
 
-## Security & Deployment
-The bot stores statistics in a lightweight SQLite database (`bot_data.db`) located in the same directory.
-For 24/7 deployment, use Docker, PM2, or a systemd service. Make sure `ffmpeg` is available in your production environment!
+The app also starts a minimal HTTP server for deployment health checks:
+- `/` returns `Bot is running`
+- `/health` returns `OK`
+
+## Deployment Notes
+- SQLite data is stored locally in `bot_data.db`.
+- Temporary downloads are stored in `downloads/` and removed after upload.
+- A sample Render deployment file is included in `render.yaml`.
+- For 24/7 hosting, make sure FFmpeg is available in the runtime environment.
+- If YouTube extraction is unreliable in production, install Node.js and optionally provide a valid cookies file.
+
+## Configuration Summary
+- `BOT_TOKEN` - required
+- `API_ID` - required
+- `API_HASH` - required
+- `ADMIN_IDS` - optional
+- `YTDLP_COOKIEFILE` - optional
