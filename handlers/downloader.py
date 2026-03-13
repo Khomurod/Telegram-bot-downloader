@@ -30,8 +30,8 @@ def build_options_keyboard(options: list[dict], language_code: str) -> InlineKey
     video_options = [opt for opt in options if opt["kind"] == "video"]
     audio_options = [opt for opt in options if opt["kind"] == "audio"]
 
-    # Optional "best" shortcut if we have at least one video format.
-    if video_options:
+    # Optional "best" shortcut for multi-option video lists.
+    if len(video_options) > 1:
         best_opt = video_options[0]
         rows.append(
             [

@@ -425,6 +425,16 @@ def build_download_options(
         for option in video_options
     ]
 
+    # Some sources (notably YouTube in certain sessions) may hide format lists
+    # while still allowing direct "best" downloads. Offer a safe video fallback.
+    if not normalized_video_options:
+        normalized_video_options.append({
+            "kind": "video",
+            "label": "MP4 (best available)",
+            "selector": "best",
+            "log_format": "best",
+        })
+
     normalized_video_options.append({
         "kind": "audio",
         "label": audio_label,
