@@ -15,8 +15,10 @@ from yt_dlp import YoutubeDL
 
 from utils.logger import logger
 
-# Keep max workers low to save CPU (2 downloads at once)
-executor = ThreadPoolExecutor(max_workers=2)
+# Separate pools: extraction is I/O-bound (HTTP) so can have more workers;
+# downloads are bandwidth/CPU-heavy so stay limited.
+extraction_executor = ThreadPoolExecutor(max_workers=3)
+download_executor = ThreadPoolExecutor(max_workers=2)
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DOWNLOAD_DIR = os.path.join(BASE_DIR, "downloads")
 COOKIE_FILE = os.path.join(BASE_DIR, "cookies.txt")
@@ -64,13 +66,21 @@ def _normalize_path(path: str | None) -> str | None:
     return path if os.path.isabs(path) else os.path.abspath(path)
 
 
+_JS_RUNTIMES_CACHE: dict | None = None
+_JS_RUNTIMES_RESOLVED = False
+
+
 def _get_js_runtimes() -> dict | None:
-    runtimes = {
-        runtime: {}
-        for runtime in ("node", "deno", "bun")
-        if shutil.which(runtime)
-    }
-    return runtimes or None
+    global _JS_RUNTIMES_CACHE, _JS_RUNTIMES_RESOLVED
+    if not _JS_RUNTIMES_RESOLVED:
+        runtimes = {
+            runtime: {}
+            for runtime in ("node", "deno", "bun")
+            if shutil.which(runtime)
+        }
+        _JS_RUNTIMES_CACHE = runtimes or None
+        _JS_RUNTIMES_RESOLVED = True
+    return _JS_RUNTIMES_CACHE
 
 
 def _apply_common_ydl_opts(opts: dict) -> dict:
@@ -481,8 +491,12 @@ def build_download_options(
     return normalized_video_options
 
 
-def _count_video_options(info: dict) -> int:
-    return sum(1 for option in build_download_options(info) if option["kind"] == "video")
+def _count_video_formats(info: dict) -> int:
+    """Fast check: count raw formats with a video codec (no label/sort overhead)."""
+    return sum(
+        1 for fmt in (info.get("formats") or [])
+        if fmt.get("vcodec") not in (None, "none")
+    )
 
 
 def get_base_ydl_opts() -> dict:
@@ -528,32 +542,30 @@ async def extract_info(url: str) -> dict:
             try:
                 with YoutubeDL(opts) as ydl:
                     info = ydl.extract_info(url, download=False)
-                    video_count = _count_video_options(info)
+                    video_count = _count_video_formats(info)
                     format_count = len(_collect_formats(info))
 
-                    if (
-                        video_count > best_video_count
-                        or (video_count == best_video_count and format_count > best_format_count)
-                    ):
+                    if video_count > 0:
+                        # First client with video formats wins — return immediately.
+                        cache_analysis(canonical_url, info)
+                        return info
+
+                    logger.info(
+                        f"Extraction attempt '{attempt_name}' returned no selectable video formats for {url}."
+                    )
+
+                    # Track best result so far in case no attempt yields video formats.
+                    has_core_metadata = bool(
+                        info.get("id") and (info.get("title") or info.get("webpage_url"))
+                    )
+                    if has_core_metadata and best_info is None:
                         best_info = info
                         best_video_count = video_count
                         best_format_count = format_count
 
-                    if video_count == 0:
-                        logger.info(
-                            f"Extraction attempt '{attempt_name}' returned no selectable video formats for {url}."
-                        )
-
-                        # Return early when we already have usable metadata.
-                        # This avoids waiting for all fallback clients on links
-                        # where providers intentionally hide detailed format lists.
-                        has_core_metadata = bool(
-                            info.get("id") and (info.get("title") or info.get("webpage_url"))
-                        )
-                        if has_core_metadata and attempt_name in {"android_client", "ios_client"}:
-                            cache_analysis(canonical_url, info)
-                            return info
-                    else:
+                    # For mobile clients, if we got core metadata but no video formats,
+                    # return early — web fallbacks are unlikely to help and waste time.
+                    if has_core_metadata and attempt_name in {"android_client", "ios_client"}:
                         cache_analysis(canonical_url, info)
                         return info
             except Exception as e:
@@ -576,7 +588,7 @@ async def extract_info(url: str) -> dict:
         return {"error": " | ".join(attempt_errors)[:1000]}
 
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(executor, _extract)
+    return await loop.run_in_executor(extraction_executor, _extract)
 
 
 async def download_media(url: str, format_spec: str) -> dict:
@@ -657,4 +669,4 @@ async def download_media(url: str, format_spec: str) -> dict:
         return {"filepath": None, "error": " | ".join(attempt_errors)[:1000]}
 
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(executor, _download)
+    return await loop.run_in_executor(download_executor, _download)

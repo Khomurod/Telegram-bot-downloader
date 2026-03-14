@@ -4,7 +4,7 @@ import re
 from pyrogram import Client, filters
 from pyrogram.types import CallbackQuery
 
-from services.db import get_user_language, log_download, register_user, set_user_language
+from services.db import ensure_user_and_get_language, log_download, set_user_language
 from services.i18n import (
     build_language_keyboard,
     build_welcome_message,
@@ -29,8 +29,7 @@ LEGACY_FORMAT_SPECS = {"audio", "1080p", "720p", "480p"}
 @Client.on_callback_query(filters.regex(r"^opt\|more$"))
 async def handle_more_options_callback(client: Client, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
-    await register_user(user_id)
-    language_code = normalize_language_code(await get_user_language(user_id))
+    language_code = await ensure_user_and_get_language(user_id)
 
     options = get_all_cached_format_options(
         callback_query.message.chat.id,
@@ -53,11 +52,10 @@ async def handle_more_options_callback(client: Client, callback_query: CallbackQ
 @Client.on_callback_query(filters.regex(r"^lang\|"))
 async def handle_language_callback(client: Client, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
-    await register_user(user_id)
 
     _, requested_language = callback_query.data.split("|", 1)
     language_code = normalize_language_code(requested_language)
-    current_language = normalize_language_code(await get_user_language(user_id))
+    current_language = normalize_language_code(await ensure_user_and_get_language(user_id))
 
     if current_language != language_code:
         await set_user_language(user_id, language_code)
@@ -85,8 +83,7 @@ async def handle_language_callback(client: Client, callback_query: CallbackQuery
 @Client.on_callback_query(filters.regex(r"^dl\|"))
 async def handle_download_callback(client: Client, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
-    await register_user(user_id)
-    language_code = normalize_language_code(await get_user_language(user_id))
+    language_code = normalize_language_code(await ensure_user_and_get_language(user_id))
     _, selection_token = callback_query.data.split("|", 1)
 
     selected_option = get_cached_format_option(

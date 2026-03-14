@@ -4,7 +4,7 @@ import re
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-from services.db import get_user_language, register_user
+from services.db import ensure_user_and_get_language
 from services.i18n import t
 from services.ytdlp_service import build_download_options, cache_format_options, extract_info
 from utils.logger import logger
@@ -110,8 +110,7 @@ def build_options_keyboard(options: list[dict], language_code: str, expanded: bo
 @Client.on_message(filters.regex(URL_REGEX) & filters.private)
 async def handle_link(client: Client, message: Message):
     user_id = message.from_user.id
-    await register_user(user_id)
-    language_code = await get_user_language(user_id)
+    language_code = await ensure_user_and_get_language(user_id)
     text = (message.text or message.caption or "").strip()
 
     match = re.search(URL_REGEX, text or "")
