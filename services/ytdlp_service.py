@@ -1,6 +1,8 @@
 import asyncio
+import base64
 import copy
 import glob
+import json
 import os
 import shutil
 import threading
@@ -8,7 +10,8 @@ import time
 import traceback
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.request import Request, urlopen
 
 import imageio_ffmpeg
 from yt_dlp import YoutubeDL
@@ -34,10 +37,14 @@ PREFERRED_VIDEO_EXTENSIONS = {
 }
 FORMAT_SELECTION_CACHE = {}
 ANALYSIS_CACHE = {}
+ANALYSIS_CACHE_LOCK = threading.Lock()
 # Telegram's maximum upload size via the client API (MTProto).  Files larger
 # than this cannot be sent and should be rejected before we waste bandwidth.
 MAX_FILESIZE_BYTES = 2000 * 1024 * 1024  # 2000 MiB ≈ Telegram client-API limit
 SOCKET_TIMEOUT_SECONDS = 120
+BTCH_BACKEND_BASE_URL = os.getenv("BTCH_BACKEND_BASE_URL", "https://backend1.tioo.eu.org").rstrip("/")
+DIRECT_SELECTOR_PREFIX = "direct:"
+_DIRECT_DOWNLOAD_CHUNK_BYTES = 256 * 1024
 
 if not os.path.exists(DOWNLOAD_DIR):
     os.makedirs(DOWNLOAD_DIR)
@@ -101,6 +108,11 @@ def _purge_format_cache() -> None:
 
 
 def _purge_analysis_cache() -> None:
+    with ANALYSIS_CACHE_LOCK:
+        _purge_analysis_cache_locked()
+
+
+def _purge_analysis_cache_locked() -> None:
     expires_before = time.monotonic() - ANALYSIS_CACHE_TTL_SECONDS
     expired_keys = [
         key for key, entry in ANALYSIS_CACHE.items()
@@ -111,19 +123,21 @@ def _purge_analysis_cache() -> None:
 
 
 def get_cached_analysis(url: str) -> dict | None:
-    _purge_analysis_cache()
-    entry = ANALYSIS_CACHE.get(url)
+    with ANALYSIS_CACHE_LOCK:
+        _purge_analysis_cache_locked()
+        entry = ANALYSIS_CACHE.get(url)
     if not entry:
         return None
     return entry["info"]
 
 
 def cache_analysis(url: str, info: dict) -> None:
-    _purge_analysis_cache()
-    ANALYSIS_CACHE[url] = {
-        "created_at": time.monotonic(),
-        "info": info,
-    }
+    with ANALYSIS_CACHE_LOCK:
+        _purge_analysis_cache_locked()
+        ANALYSIS_CACHE[url] = {
+            "created_at": time.monotonic(),
+            "info": info,
+        }
 
 
 def _canonicalize_url(url: str) -> str:
@@ -147,14 +161,286 @@ def _canonicalize_url(url: str) -> str:
     return url.split("#", 1)[0]
 
 
+def _ensure_list(value) -> list:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    return [value]
+
+
+def _infer_media_kind_from_url(media_url: str) -> str:
+    path = (urlparse(media_url).path or "").lower()
+    _, ext = os.path.splitext(path)
+    if ext in {".mp3", ".m4a", ".aac", ".ogg", ".wav", ".flac"}:
+        return "audio"
+    if ext in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:
+        return "image"
+    return "video"
+
+
+def _encode_direct_selector(media_url: str, kind: str) -> str:
+    payload = json.dumps({"url": media_url, "kind": kind}, separators=(",", ":")).encode("utf-8")
+    encoded = base64.urlsafe_b64encode(payload).decode("ascii")
+    return f"{DIRECT_SELECTOR_PREFIX}{encoded}"
+
+
+def _decode_direct_selector(selector: str) -> dict | None:
+    if not selector or not selector.startswith(DIRECT_SELECTOR_PREFIX):
+        return None
+    encoded = selector[len(DIRECT_SELECTOR_PREFIX):]
+    try:
+        payload = base64.urlsafe_b64decode(encoded.encode("ascii"))
+        parsed = json.loads(payload.decode("utf-8"))
+    except Exception:
+        return None
+
+    media_url = parsed.get("url")
+    kind = parsed.get("kind") or "video"
+    if not isinstance(media_url, str) or not media_url.startswith(("http://", "https://")):
+        return None
+    return {"url": media_url, "kind": kind}
+
+
+def _guess_extension_from_content_type(content_type: str | None) -> str | None:
+    if not content_type:
+        return None
+
+    normalized = content_type.split(";", 1)[0].strip().lower()
+    mapping = {
+        "video/mp4": ".mp4",
+        "video/webm": ".webm",
+        "video/quicktime": ".mov",
+        "video/x-matroska": ".mkv",
+        "audio/mpeg": ".mp3",
+        "audio/mp3": ".mp3",
+        "audio/mp4": ".m4a",
+        "audio/aac": ".aac",
+        "audio/ogg": ".ogg",
+        "audio/wav": ".wav",
+        "image/jpeg": ".jpg",
+        "image/png": ".png",
+        "image/webp": ".webp",
+        "image/gif": ".gif",
+    }
+    return mapping.get(normalized)
+
+
+def _guess_extension_from_url(media_url: str) -> str | None:
+    ext = os.path.splitext((urlparse(media_url).path or "").lower())[1]
+    if ext in {
+        ".mp4",
+        ".webm",
+        ".mov",
+        ".mkv",
+        ".mp3",
+        ".m4a",
+        ".aac",
+        ".ogg",
+        ".wav",
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".webp",
+        ".gif",
+    }:
+        return ".jpg" if ext == ".jpeg" else ext
+    return None
+
+
+def _download_direct_media(selection: dict, source_url: str) -> dict:
+    media_url = selection["url"]
+    media_kind = selection.get("kind") or "video"
+    request = Request(
+        media_url,
+        headers={
+            "User-Agent": "TelegramDownloaderBot/1.0",
+            "Referer": source_url,
+        },
+        method="GET",
+    )
+
+    filepath = None
+    try:
+        with urlopen(request, timeout=SOCKET_TIMEOUT_SECONDS) as response:
+            content_type = response.headers.get("Content-Type")
+            content_length = response.headers.get("Content-Length")
+            if content_length:
+                try:
+                    if int(content_length) > MAX_FILESIZE_BYTES:
+                        return {
+                            "filepath": None,
+                            "thumb": None,
+                            "error": "Remote media exceeds maximum allowed filesize",
+                        }
+                except ValueError:
+                    pass
+
+            if (content_type or "").lower().startswith("text/html"):
+                return {
+                    "filepath": None,
+                    "thumb": None,
+                    "error": "Direct media endpoint returned HTML instead of media",
+                }
+
+            extension = (
+                _guess_extension_from_content_type(content_type)
+                or _guess_extension_from_url(media_url)
+                or (".mp3" if media_kind == "audio" else ".mp4")
+            )
+            filepath = os.path.join(DOWNLOAD_DIR, f"direct_{uuid.uuid4().hex[:10]}{extension}")
+
+            downloaded = 0
+            with open(filepath, "wb") as output_file:
+                while True:
+                    chunk = response.read(_DIRECT_DOWNLOAD_CHUNK_BYTES)
+                    if not chunk:
+                        break
+                    output_file.write(chunk)
+                    downloaded += len(chunk)
+                    if downloaded > MAX_FILESIZE_BYTES:
+                        raise ValueError("filesize exceeds maximum allowed limit")
+    except Exception as exc:
+        if filepath and os.path.exists(filepath):
+            try:
+                os.remove(filepath)
+            except Exception:
+                pass
+        return {"filepath": None, "thumb": None, "error": str(exc)}
+
+    return {"filepath": filepath, "thumb": None, "error": None}
+
+
+def _get_btch_endpoint_for_url(url: str) -> str | None:
+    host = (urlparse(url).netloc or "").lower()
+    if host.endswith("threads.com") or host.endswith("threads.net"):
+        return "threads"
+    if (
+        host.endswith("tiktok.com")
+        or host.endswith("vt.tiktok.com")
+        or host.endswith("vm.tiktok.com")
+    ):
+        return "ttdl"
+    return None
+
+
+def _fetch_btch_payload(endpoint: str, url: str) -> dict | None:
+    query = urlencode({"url": url})
+    api_url = f"{BTCH_BACKEND_BASE_URL}/{endpoint}?{query}"
+    headers = {
+        "User-Agent": "TelegramDownloaderBot/1.0",
+        "Accept": "application/json",
+    }
+    request = Request(api_url, headers=headers, method="GET")
+
+    try:
+        with urlopen(request, timeout=SOCKET_TIMEOUT_SECONDS) as response:
+            payload = response.read().decode("utf-8", errors="replace")
+    except Exception as exc:
+        logger.warning(f"BTCH fallback request failed for {url}: {exc}")
+        return None
+
+    try:
+        data = json.loads(payload)
+    except Exception:
+        logger.warning(f"BTCH fallback returned non-JSON response for {url}")
+        return None
+
+    if not isinstance(data, dict):
+        return None
+    return data
+
+
+def _extract_btch_direct_options(endpoint: str, payload: dict) -> list[dict]:
+    options: list[dict] = []
+
+    if endpoint == "threads":
+        result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+        media_url = result.get("video") or payload.get("video")
+        if isinstance(media_url, str) and media_url.startswith(("http://", "https://")):
+            kind = _infer_media_kind_from_url(media_url)
+            label = "Image file" if kind == "image" else "Best quality"
+            options.append({
+                "kind": "video",
+                "label": label,
+                "selector": _encode_direct_selector(media_url, kind),
+                "log_format": f"btch-threads-{kind}",
+            })
+        return options
+
+    if endpoint == "ttdl":
+        for index, media_url in enumerate(_ensure_list(payload.get("video")), start=1):
+            if not isinstance(media_url, str) or not media_url.startswith(("http://", "https://")):
+                continue
+            kind = _infer_media_kind_from_url(media_url)
+            options.append({
+                "kind": "video",
+                "label": f"Video {index}",
+                "selector": _encode_direct_selector(media_url, kind),
+                "log_format": f"btch-video-{index}",
+            })
+
+        for index, media_url in enumerate(_ensure_list(payload.get("audio")), start=1):
+            if not isinstance(media_url, str) or not media_url.startswith(("http://", "https://")):
+                continue
+            options.append({
+                "kind": "audio",
+                "label": f"Audio {index}",
+                "selector": _encode_direct_selector(media_url, "audio"),
+                "log_format": f"btch-audio-{index}",
+            })
+
+    return options
+
+
+def _build_info_from_btch(url: str, endpoint: str, payload: dict) -> dict | None:
+    direct_options = _extract_btch_direct_options(endpoint, payload)
+    if not direct_options:
+        return None
+
+    result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+    title = payload.get("title") or result.get("title") or "Unknown"
+
+    duration_raw = payload.get("duration") or result.get("duration")
+    try:
+        duration = int(float(duration_raw))
+    except (TypeError, ValueError):
+        duration = 0
+
+    return {
+        "id": f"btch_{uuid.uuid4().hex[:10]}",
+        "title": title,
+        "duration": max(0, duration),
+        "webpage_url": url,
+        "__source": "btch",
+        "__direct_options": direct_options,
+    }
+
+
+def _is_btch_fast_fallback_error(error: Exception) -> bool:
+    text = str(error).lower()
+    return (
+        "unsupported url" in text
+        or "read timed out" in text
+        or "unable to download webpage" in text
+    )
+
+
 def cache_format_options(chat_id: int, message_id: int, options: list[dict]) -> list[dict]:
     _purge_format_cache()
 
     cached_options = []
     option_map = {}
+    video_count = 0
+    audio_count = 0
 
-    for index, option in enumerate(options, start=1):
-        token = "a" if option["kind"] == "audio" else f"v{index}"
+    for option in options:
+        if option["kind"] == "audio":
+            audio_count += 1
+            token = "a" if audio_count == 1 else f"a{audio_count}"
+        else:
+            video_count += 1
+            token = f"v{video_count}"
         cached_option = {
             "kind": option["kind"],
             "label": option["label"],
@@ -389,6 +675,32 @@ def build_download_options(
     unknown_label: str = "Unknown",
     audio_label: str = "Audio (MP3)",
 ) -> list[dict]:
+    direct_options = info.get("__direct_options")
+    if isinstance(direct_options, list) and direct_options:
+        normalized_direct_options = []
+        for option in direct_options:
+            if not isinstance(option, dict):
+                continue
+
+            kind = option.get("kind")
+            if kind not in {"video", "audio"}:
+                continue
+
+            label = option.get("label")
+            selector = option.get("selector")
+            if not isinstance(label, str) or not isinstance(selector, str):
+                continue
+
+            normalized_direct_options.append({
+                "kind": kind,
+                "label": label,
+                "selector": selector,
+                "log_format": option.get("log_format") or selector,
+            })
+
+        if normalized_direct_options:
+            return normalized_direct_options
+
     formats = _collect_formats(info)
     best_by_label = {}
 
@@ -528,6 +840,7 @@ async def extract_info(url: str) -> dict:
     def _extract():
         global _COOKIE_FILE_DISABLED
         canonical_url = _canonicalize_url(url)
+        btch_endpoint = _get_btch_endpoint_for_url(canonical_url)
 
         cached_info = get_cached_analysis(canonical_url)
         if cached_info is not None:
@@ -535,15 +848,12 @@ async def extract_info(url: str) -> dict:
 
         attempt_errors = []
         best_info = None
-        best_video_count = -1
-        best_format_count = -1
 
         for attempt_name, opts in _get_extraction_attempts():
             try:
                 with YoutubeDL(opts) as ydl:
-                    info = ydl.extract_info(url, download=False)
+                    info = ydl.extract_info(canonical_url, download=False)
                     video_count = _count_video_formats(info)
-                    format_count = len(_collect_formats(info))
 
                     if video_count > 0:
                         # First client with video formats wins — return immediately.
@@ -560,8 +870,6 @@ async def extract_info(url: str) -> dict:
                     )
                     if has_core_metadata and best_info is None:
                         best_info = info
-                        best_video_count = video_count
-                        best_format_count = format_count
 
                     # For mobile clients, if we got core metadata but no video formats,
                     # return early — web fallbacks are unlikely to help and waste time.
@@ -573,17 +881,32 @@ async def extract_info(url: str) -> dict:
                 logger.warning(
                     f"Extraction attempt '{attempt_name}' failed for {url}: {e}\n{err_msg}"
                 )
-                if attempt_name == "primary_web" and opts.get("cookiefile") and _should_disable_cookies(e):
+                if attempt_name == "web_with_cookies" and opts.get("cookiefile") and _should_disable_cookies(e):
                     with _COOKIE_FILE_LOCK:
                         _COOKIE_FILE_DISABLED = True
                     logger.warning(
                         f"Disabling cookie file for subsequent downloads due to failure: {opts.get('cookiefile')}"
                     )
                 attempt_errors.append(f"{attempt_name}: {e}")
+                if btch_endpoint and _is_btch_fast_fallback_error(e):
+                    logger.info(
+                        "Fast fallback to BTCH triggered for %s due to extraction error: %s",
+                        url,
+                        e,
+                    )
+                    break
 
         if best_info is not None:
             cache_analysis(canonical_url, best_info)
             return best_info
+
+        if btch_endpoint:
+            payload = _fetch_btch_payload(btch_endpoint, canonical_url)
+            fallback_info = _build_info_from_btch(canonical_url, btch_endpoint, payload or {})
+            if fallback_info:
+                cache_analysis(canonical_url, fallback_info)
+                return fallback_info
+            attempt_errors.append("btch_fallback: no downloadable media found")
 
         return {"error": " | ".join(attempt_errors)[:1000]}
 
@@ -596,6 +919,10 @@ async def download_media(url: str, format_spec: str) -> dict:
 
     def _download():
         global _COOKIE_FILE_DISABLED
+
+        direct_selection = _decode_direct_selector(format_spec)
+        if direct_selection:
+            return _download_direct_media(direct_selection, source_url=url)
 
         base_opts = get_base_ydl_opts()
         _apply_format_opts(base_opts, format_spec)

@@ -1,0 +1,70 @@
+{
+  "rounds": 2,
+  "tests": [
+    {
+      "id": "threads_user_media",
+      "platform": "threads",
+      "url": "https://www.threads.com/@theclashcalling/post/DXhRslWDZZX/media?hl=en"
+    },
+    {
+      "id": "threads_readme",
+      "platform": "threads",
+      "url": "https://www.threads.net/@cindyyuvia/post/C_Nqx3khgkI/?xmt=AQGzpsCvidh8IwIqOvq4Ov05Zd5raANiVdvCujM_pjBa1Q"
+    },
+    {
+      "id": "youtube_readme",
+      "platform": "youtube",
+      "url": "https://youtube.com/watch?v=C8mJ8943X80"
+    },
+    {
+      "id": "youtube_popular",
+      "platform": "youtube",
+      "url": "https://youtu.be/dQw4w9WgXcQ"
+    },
+    {
+      "id": "instagram_readme",
+      "platform": "igdl",
+      "url": "https://www.instagram.com/p/ByxKbUSnubS/?utm_source=ig_web_copy_link"
+    },
+    {
+      "id": "tiktok_readme",
+      "platform": "ttdl",
+      "url": "https://www.tiktok.com/@omagadsus/video/7025456384175017243"
+    },
+    {
+      "id": "facebook_readme",
+      "platform": "fbdown",
+      "url": "https://www.facebook.com/watch/?v=1393572814172251"
+    },
+    {
+      "id": "twitter_readme",
+      "platform": "twitter",
+      "url": "https://twitter.com/gofoodindonesia/status/1229369819511709697"
+    },
+    {
+      "id": "soundcloud_readme",
+      "platform": "soundcloud",
+      "url": "https://soundcloud.com/issabella-marchelina/sisa-rasa-mahalini-official-audio?utm_source=clipboard&utm_medium=text&utm_campaign=social_sharing"
+    },
+    {
+      "id": "spotify_readme",
+      "platform": "spotify",
+      "url": "https://open.spotify.com/track/3zakx7RAwdkUQlOoQ7SJRt"
+    },
+    {
+      "id": "gdrive_readme",
+      "platform": "gdrive",
+      "url": "https://drive.google.com/file/d/1thDYWcS5p5FFhzTpTev7RUv0VFnNQyZ4/view"
+    },
+    {
+      "id": "mediafire_readme",
+      "platform": "mediafire",
+      "url": "https://www.mediafire.com/file/941xczxhn27qbby/GBWA_V12.25FF-By.SamMods-.apk/file"
+    },
+    {
+      "id": "pinterest_readme",
+      "platform": "pinterest",
+      "url": "https://pin.it/4CVodSq"
+    }
+  ]
+}

@@ -1,11 +1,43 @@
-*.pyc
+# Python
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# Virtual environments and local env files
 .env
+.env.*
+!.env.example
+.venv/
+venv/
+env/
+
+# Bot runtime artifacts
 downloads/
 cookies.txt
-ytdlp_error.log
 *.session
 *.session-journal
 bot_data.db
+ytdlp_error.log
 out.txt
 test_out.txt
+*.log
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Generated benchmark outputs
+bench/btch_results*.json
+bench/ytdlp_results*.json
+bench/comparison_summary*.json
+bench/compare_config.bak.json
+
+# Local scratch files
+tmp_*.js
+
+# OS files
+.DS_Store
+Thumbs.db

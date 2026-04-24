@@ -102,11 +102,12 @@ async def handle_download_callback(client: Client, callback_query: CallbackQuery
         return
 
     original_message = callback_query.message.reply_to_message
-    if not original_message or not original_message.text:
+    original_text = (original_message.text or original_message.caption or "") if original_message else ""
+    if not original_message or not original_text:
         await callback_query.answer(t(language_code, "original_link_not_found"), show_alert=True)
         return
 
-    url_match = re.search(r"(https?://[^\s]+)", original_message.text)
+    url_match = re.search(r"(https?://[^\s]+)", original_text)
     if not url_match:
         await callback_query.answer(t(language_code, "no_url_found"), show_alert=True)
         return
@@ -130,13 +131,13 @@ async def handle_download_callback(client: Client, callback_query: CallbackQuery
 
     await acquire_lock(send_wait_message=notify_queue)
     filepath = None
+    thumb_path = None
     download_error = None
 
     try:
         await callback_query.message.edit_text(t(language_code, "downloading_media"))
 
         result = await download_media(url, format_spec)
-        thumb_path = None
         if isinstance(result, dict):
             filepath = result.get("filepath")
             download_error = result.get("error")
