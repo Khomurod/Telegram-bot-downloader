@@ -161,6 +161,22 @@ def _canonicalize_url(url: str) -> str:
     return url.split("#", 1)[0]
 
 
+def _is_youtube_url(url: str) -> bool:
+    try:
+        host = (urlparse(url).netloc or "").lower()
+    except Exception:
+        return False
+
+    if host.startswith("www."):
+        host = host[4:]
+
+    return (
+        host == "youtu.be"
+        or host.endswith("youtube.com")
+        or host.endswith("youtube-nocookie.com")
+    )
+
+
 def _ensure_list(value) -> list:
     if value is None:
         return []
@@ -575,7 +591,23 @@ def _should_disable_cookies(error: Exception) -> bool:
     return "sign in" in err_lower or "cookie" in err_lower
 
 
-def _get_extraction_attempts() -> list[tuple[str, dict]]:
+def _build_web_attempts(base_opts: dict, cookie_file: str | None) -> list[tuple[str, dict]]:
+    attempts: list[tuple[str, dict]] = []
+
+    if cookie_file:
+        web_with_cookie_opts = copy.deepcopy(base_opts)
+        web_with_cookie_opts["cookiefile"] = cookie_file
+        attempts.append(("web_with_cookies", web_with_cookie_opts))
+
+        web_no_cookie_opts = copy.deepcopy(base_opts)
+        attempts.append(("web_no_cookies", web_no_cookie_opts))
+        return attempts
+
+    attempts.append(("web_no_cookies", copy.deepcopy(base_opts)))
+    return attempts
+
+
+def _get_extraction_attempts(source_url: str) -> list[tuple[str, dict]]:
     base_opts = _apply_common_ydl_opts({
         "quiet": True,
         "no_warnings": True,
@@ -584,6 +616,9 @@ def _get_extraction_attempts() -> list[tuple[str, dict]]:
     })
 
     cookie_file = _get_cookie_file()
+    if not _is_youtube_url(source_url):
+        # Non-YouTube sites should use the default extractor behavior.
+        return _build_web_attempts(base_opts, cookie_file)
 
     # Try android client FIRST — YouTube Shorts work reliably with it,
     # while the web extractor often returns 0 video formats for Shorts.
@@ -597,14 +632,7 @@ def _get_extraction_attempts() -> list[tuple[str, dict]]:
     attempts.append(("ios_client", ios_opts))
 
     # Web with cookies as third — may work for non-Shorts content.
-    web_opts = copy.deepcopy(base_opts)
-    if cookie_file:
-        web_opts["cookiefile"] = cookie_file
-    attempts.append(("web_with_cookies", web_opts))
-
-    # Web without cookies as last resort.
-    web_no_cookie_opts = copy.deepcopy(base_opts)
-    attempts.append(("web_no_cookies", web_no_cookie_opts))
+    attempts.extend(_build_web_attempts(base_opts, cookie_file))
 
     return attempts
 
@@ -840,6 +868,7 @@ async def extract_info(url: str) -> dict:
     def _extract():
         global _COOKIE_FILE_DISABLED
         canonical_url = _canonicalize_url(url)
+        is_youtube_source = _is_youtube_url(canonical_url)
         btch_endpoint = _get_btch_endpoint_for_url(canonical_url)
 
         cached_info = get_cached_analysis(canonical_url)
@@ -849,7 +878,7 @@ async def extract_info(url: str) -> dict:
         attempt_errors = []
         best_info = None
 
-        for attempt_name, opts in _get_extraction_attempts():
+        for attempt_name, opts in _get_extraction_attempts(canonical_url):
             try:
                 with YoutubeDL(opts) as ydl:
                     info = ydl.extract_info(canonical_url, download=False)
@@ -873,7 +902,11 @@ async def extract_info(url: str) -> dict:
 
                     # For mobile clients, if we got core metadata but no video formats,
                     # return early — web fallbacks are unlikely to help and waste time.
-                    if has_core_metadata and attempt_name in {"android_client", "ios_client"}:
+                    if (
+                        has_core_metadata
+                        and is_youtube_source
+                        and attempt_name in {"android_client", "ios_client"}
+                    ):
                         cache_analysis(canonical_url, info)
                         return info
             except Exception as e:
@@ -928,24 +961,28 @@ async def download_media(url: str, format_spec: str) -> dict:
         _apply_format_opts(base_opts, format_spec)
 
         # Android client first — works reliably for YouTube Shorts.
-        android_opts = copy.deepcopy(base_opts)
-        android_opts.pop("cookiefile", None)
-        android_opts["extractor_args"] = {"youtube": {"player_client": ["android"]}}
-        attempts = [("android_client", android_opts)]
+        attempts: list[tuple[str, dict]] = []
+        no_cookie_opts: dict
 
-        # iOS client as second option.
-        ios_opts = copy.deepcopy(base_opts)
-        ios_opts.pop("cookiefile", None)
-        ios_opts["extractor_args"] = {"youtube": {"player_client": ["ios"]}}
-        attempts.append(("ios_client", ios_opts))
+        if _is_youtube_url(url):
+            android_opts = copy.deepcopy(base_opts)
+            android_opts.pop("cookiefile", None)
+            android_opts["extractor_args"] = {"youtube": {"player_client": ["android"]}}
+            attempts.append(("android_client", android_opts))
 
-        # Web with cookies third.
-        attempts.append(("web_with_cookies", base_opts))
+            ios_opts = copy.deepcopy(base_opts)
+            ios_opts.pop("cookiefile", None)
+            ios_opts["extractor_args"] = {"youtube": {"player_client": ["ios"]}}
+            attempts.append(("ios_client", ios_opts))
 
-        # Web without cookies.
-        no_cookie_opts = copy.deepcopy(base_opts)
-        no_cookie_opts.pop("cookiefile", None)
-        attempts.append(("web_no_cookies", no_cookie_opts))
+        if base_opts.get("cookiefile"):
+            attempts.append(("web_with_cookies", copy.deepcopy(base_opts)))
+            no_cookie_opts = copy.deepcopy(base_opts)
+            no_cookie_opts.pop("cookiefile", None)
+            attempts.append(("web_no_cookies", no_cookie_opts))
+        else:
+            no_cookie_opts = copy.deepcopy(base_opts)
+            attempts.append(("web_no_cookies", no_cookie_opts))
 
         if format_spec not in LEGACY_FORMAT_SPECS and format_spec != "audio":
             exact_selector = True

@@ -7,12 +7,7 @@ __pycache__/
 .mypy_cache/
 
 # Virtual environments and local env files
-.env
-.env.*
-!.env.example
-.venv/
-venv/
-env/
+.vendor/
 
 # Bot runtime artifacts
 downloads/
@@ -20,6 +15,8 @@ cookies.txt
 *.session
 *.session-journal
 bot_data.db
+bot_data.db-shm
+bot_data.db-wal
 ytdlp_error.log
 out.txt
 test_out.txt
