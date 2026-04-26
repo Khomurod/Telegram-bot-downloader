@@ -1,132 +1,51 @@
-import os
-
-import aiosqlite
-
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "bot_data.db")
-DB_PATH = os.path.abspath(DB_PATH)
-DEFAULT_LANGUAGE = "en"
-
-_db_connection: aiosqlite.Connection | None = None
-
-
-async def get_db() -> aiosqlite.Connection:
-    """Return a persistent shared DB connection (created on first call)."""
-    global _db_connection
-    if _db_connection is None:
-        _db_connection = await aiosqlite.connect(DB_PATH)
-        await _db_connection.execute("PRAGMA journal_mode=WAL")
-    return _db_connection
+from services.gsheets import (
+    DEFAULT_LANGUAGE,
+    ensure_user_and_get_language_sheet,
+    get_all_user_ids_from_sheet,
+    get_stats_from_sheet,
+    log_download_to_sheet,
+    register_user_to_sheet,
+    set_user_language_in_sheet,
+)
+from utils.logger import logger
 
 
 async def init_db():
-    db = await get_db()
-    await db.execute(
-        """
-        CREATE TABLE IF NOT EXISTS downloads (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            link TEXT,
-            format TEXT,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-            status TEXT
-        )
-        """
-    )
-    await db.execute(
-        f"""
-        CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
-            first_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
-            language_code TEXT NOT NULL DEFAULT '{DEFAULT_LANGUAGE}'
-        )
-        """
-    )
+    # Google Sheets webhook is now the primary persistence layer.
+    logger.info("Google Sheets primary database mode is enabled.")
 
-    async with db.execute("PRAGMA table_info(users)") as cursor:
-        columns = {row[1] async for row in cursor}
 
-    if "language_code" not in columns:
-        await db.execute(
-            f"ALTER TABLE users ADD COLUMN language_code TEXT NOT NULL DEFAULT '{DEFAULT_LANGUAGE}'"
-        )
-
-    await db.execute(
-        "UPDATE users SET language_code = ? WHERE language_code IS NULL OR TRIM(language_code) = ''",
-        (DEFAULT_LANGUAGE,),
-    )
-    await db.commit()
+async def get_db():
+    raise RuntimeError("get_db is not available in Google Sheets primary database mode.")
 
 
 async def register_user(user_id: int, language_code: str = DEFAULT_LANGUAGE):
-    db = await get_db()
-    await db.execute(
-        "INSERT OR IGNORE INTO users (user_id, language_code) VALUES (?, ?)",
-        (user_id, language_code or DEFAULT_LANGUAGE),
-    )
-    await db.execute(
-        "UPDATE users SET language_code = ? WHERE user_id = ? AND (language_code IS NULL OR TRIM(language_code) = '')",
-        (DEFAULT_LANGUAGE, user_id),
-    )
-    await db.commit()
+    await register_user_to_sheet(user_id, "", language_code or DEFAULT_LANGUAGE)
 
 
 async def get_user_language(user_id: int) -> str:
-    db = await get_db()
-    async with db.execute(
-        "SELECT language_code FROM users WHERE user_id = ?",
-        (user_id,),
-    ) as cursor:
-        row = await cursor.fetchone()
-
-    if not row or not row[0]:
-        return DEFAULT_LANGUAGE
-    return row[0]
+    return await ensure_user_and_get_language(user_id)
 
 
 async def set_user_language(user_id: int, language_code: str):
-    await register_user(user_id)
-
-    db = await get_db()
-    await db.execute(
-        "UPDATE users SET language_code = ? WHERE user_id = ?",
-        (language_code or DEFAULT_LANGUAGE, user_id),
-    )
-    await db.commit()
+    await set_user_language_in_sheet(user_id, language_code or DEFAULT_LANGUAGE)
 
 
 async def log_download(user_id: int, link: str, format_choice: str, status: str):
-    db = await get_db()
-    await db.execute(
-        "INSERT INTO downloads (user_id, link, format, status) VALUES (?, ?, ?, ?)",
-        (user_id, link, format_choice, status),
-    )
-    await db.commit()
+    await log_download_to_sheet(user_id, link, format_choice, status)
 
 
 async def get_stats():
-    db = await get_db()
-    async with db.execute("SELECT COUNT(*) FROM users") as cursor:
-        total_users = (await cursor.fetchone())[0]
-    async with db.execute("SELECT COUNT(*) FROM downloads") as cursor:
-        total_downloads = (await cursor.fetchone())[0]
-    async with db.execute(
-        "SELECT COUNT(*) FROM downloads WHERE date(timestamp) = date('now')"
-    ) as cursor:
-        today_downloads = (await cursor.fetchone())[0]
-
-    return total_users, total_downloads, today_downloads
+    return await get_stats_from_sheet()
 
 
-async def ensure_user_and_get_language(user_id: int) -> str:
-    """Register user if needed and return their language in one DB trip."""
-    db = await get_db()
-    await db.execute(
-        "INSERT OR IGNORE INTO users (user_id, language_code) VALUES (?, ?)",
-        (user_id, DEFAULT_LANGUAGE),
+async def get_all_user_ids() -> list[int]:
+    return await get_all_user_ids_from_sheet()
+
+
+async def ensure_user_and_get_language(user_id: int, first_name: str = "") -> str:
+    return await ensure_user_and_get_language_sheet(
+        user_id=user_id,
+        first_name=first_name or "",
+        default_language=DEFAULT_LANGUAGE,
     )
-    async with db.execute(
-        "SELECT language_code FROM users WHERE user_id = ?", (user_id,)
-    ) as cursor:
-        row = await cursor.fetchone()
-    await db.commit()
-    return (row[0] if row and row[0] else DEFAULT_LANGUAGE)

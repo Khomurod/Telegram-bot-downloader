@@ -57,8 +57,9 @@ async def handle_language_callback(client: Client, callback_query: CallbackQuery
     language_code = normalize_language_code(requested_language)
     current_language = normalize_language_code(await ensure_user_and_get_language(user_id))
 
-    if current_language != language_code:
-        await set_user_language(user_id, language_code)
+    # Always persist the chosen language so DB remains source-of-truth even
+    # across restarts/redeployments with persistent storage.
+    await set_user_language(user_id, language_code)
 
     await callback_query.answer(
         t(

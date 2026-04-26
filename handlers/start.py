@@ -11,7 +11,7 @@ from services.i18n import build_language_keyboard, build_welcome_message, t
 async def start_command(client: Client, message: Message):
     user_id = message.from_user.id
     first_name = message.from_user.first_name if message.from_user else ""
-    language_code = await ensure_user_and_get_language(user_id)
+    language_code = await ensure_user_and_get_language(user_id, first_name=first_name)
     asyncio.create_task(register_user_to_sheet(user_id, first_name, language_code))
 
     await message.reply_text(
