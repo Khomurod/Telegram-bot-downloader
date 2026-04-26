@@ -195,6 +195,10 @@ def _infer_media_kind_from_url(media_url: str) -> str:
     return "video"
 
 
+def _is_http_url(value) -> bool:
+    return isinstance(value, str) and value.startswith(("http://", "https://"))
+
+
 def _encode_direct_selector(media_url: str, kind: str) -> str:
     payload = json.dumps({"url": media_url, "kind": kind}, separators=(",", ":")).encode("utf-8")
     encoded = base64.urlsafe_b64encode(payload).decode("ascii")
@@ -331,16 +335,22 @@ def _get_btch_endpoint_for_url(url: str) -> str | None:
     host = (urlparse(url).netloc or "").lower()
     if host.endswith("threads.com") or host.endswith("threads.net"):
         return "threads"
+    if host.endswith("instagram.com"):
+        return "igdl"
     if (
         host.endswith("tiktok.com")
         or host.endswith("vt.tiktok.com")
         or host.endswith("vm.tiktok.com")
     ):
         return "ttdl"
+    if host.endswith("twitter.com") or host.endswith("x.com"):
+        return "twitter"
+    if host.endswith("facebook.com") or host.endswith("fb.watch"):
+        return "fbdown"
     return None
 
 
-def _fetch_btch_payload(endpoint: str, url: str) -> dict | None:
+def _fetch_btch_payload(endpoint: str, url: str):
     query = urlencode({"url": url})
     api_url = f"{BTCH_BACKEND_BASE_URL}/{endpoint}?{query}"
     headers = {
@@ -362,62 +372,143 @@ def _fetch_btch_payload(endpoint: str, url: str) -> dict | None:
         logger.warning(f"BTCH fallback returned non-JSON response for {url}")
         return None
 
-    if not isinstance(data, dict):
-        return None
     return data
 
 
-def _extract_btch_direct_options(endpoint: str, payload: dict) -> list[dict]:
+def _append_btch_direct_option(
+    options: list[dict],
+    *,
+    media_url: str,
+    label: str,
+    log_format: str,
+    kind_hint: str | None = None,
+) -> None:
+    if not _is_http_url(media_url):
+        return
+    kind = kind_hint or _infer_media_kind_from_url(media_url)
+    options.append({
+        "kind": "audio" if kind == "audio" else "video",
+        "label": label,
+        "selector": _encode_direct_selector(media_url, kind),
+        "log_format": log_format,
+    })
+
+
+def _extract_btch_direct_options(endpoint: str, payload) -> list[dict]:
     options: list[dict] = []
 
     if endpoint == "threads":
-        result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
-        media_url = result.get("video") or payload.get("video")
-        if isinstance(media_url, str) and media_url.startswith(("http://", "https://")):
-            kind = _infer_media_kind_from_url(media_url)
-            label = "Image file" if kind == "image" else "Best quality"
-            options.append({
-                "kind": "video",
-                "label": label,
-                "selector": _encode_direct_selector(media_url, kind),
-                "log_format": f"btch-threads-{kind}",
-            })
+        if isinstance(payload, dict):
+            result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+            media_url = result.get("video") or payload.get("video")
+            if _is_http_url(media_url):
+                kind = _infer_media_kind_from_url(media_url)
+                label = "Image file" if kind == "image" else "Best quality"
+                _append_btch_direct_option(
+                    options,
+                    media_url=media_url,
+                    label=label,
+                    log_format=f"btch-threads-{kind}",
+                    kind_hint=kind,
+                )
         return options
 
     if endpoint == "ttdl":
-        for index, media_url in enumerate(_ensure_list(payload.get("video")), start=1):
-            if not isinstance(media_url, str) or not media_url.startswith(("http://", "https://")):
-                continue
-            kind = _infer_media_kind_from_url(media_url)
-            options.append({
-                "kind": "video",
-                "label": f"Video {index}",
-                "selector": _encode_direct_selector(media_url, kind),
-                "log_format": f"btch-video-{index}",
-            })
+        if isinstance(payload, dict):
+            for index, media_url in enumerate(_ensure_list(payload.get("video")), start=1):
+                _append_btch_direct_option(
+                    options,
+                    media_url=media_url,
+                    label=f"Video {index}",
+                    log_format=f"btch-video-{index}",
+                )
 
-        for index, media_url in enumerate(_ensure_list(payload.get("audio")), start=1):
-            if not isinstance(media_url, str) or not media_url.startswith(("http://", "https://")):
-                continue
-            options.append({
-                "kind": "audio",
-                "label": f"Audio {index}",
-                "selector": _encode_direct_selector(media_url, "audio"),
-                "log_format": f"btch-audio-{index}",
-            })
+            for index, media_url in enumerate(_ensure_list(payload.get("audio")), start=1):
+                _append_btch_direct_option(
+                    options,
+                    media_url=media_url,
+                    label=f"Audio {index}",
+                    log_format=f"btch-audio-{index}",
+                    kind_hint="audio",
+                )
+        return options
+
+    if endpoint == "igdl":
+        media_items = []
+        if isinstance(payload, list):
+            media_items = payload
+        elif isinstance(payload, dict):
+            media_items = _ensure_list(payload.get("result") or payload.get("data"))
+
+        for index, item in enumerate(media_items, start=1):
+            media_url = item.get("url") if isinstance(item, dict) else item
+            _append_btch_direct_option(
+                options,
+                media_url=media_url,
+                label=f"Video {index}",
+                log_format=f"btch-igdl-{index}",
+            )
+        return options
+
+    if endpoint == "twitter":
+        if isinstance(payload, dict):
+            for index, media_item in enumerate(_ensure_list(payload.get("url")), start=1):
+                if isinstance(media_item, dict):
+                    for variant_label, media_url in (
+                        ("HD", media_item.get("hd")),
+                        ("SD", media_item.get("sd")),
+                        ("Default", media_item.get("url")),
+                    ):
+                        _append_btch_direct_option(
+                            options,
+                            media_url=media_url,
+                            label=f"{variant_label} video {index}",
+                            log_format=f"btch-twitter-{variant_label.lower()}-{index}",
+                        )
+                else:
+                    _append_btch_direct_option(
+                        options,
+                        media_url=media_item,
+                        label=f"Video {index}",
+                        log_format=f"btch-twitter-{index}",
+                    )
+        return options
+
+    if endpoint == "fbdown":
+        if isinstance(payload, dict):
+            _append_btch_direct_option(
+                options,
+                media_url=payload.get("HD"),
+                label="HD video",
+                log_format="btch-fb-hd",
+            )
+            _append_btch_direct_option(
+                options,
+                media_url=payload.get("Normal_video"),
+                label="SD video",
+                log_format="btch-fb-sd",
+            )
 
     return options
 
 
-def _build_info_from_btch(url: str, endpoint: str, payload: dict) -> dict | None:
+def _build_info_from_btch(url: str, endpoint: str, payload) -> dict | None:
     direct_options = _extract_btch_direct_options(endpoint, payload)
     if not direct_options:
         return None
 
-    result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
-    title = payload.get("title") or result.get("title") or "Unknown"
+    result = payload.get("result") if isinstance(payload, dict) and isinstance(payload.get("result"), dict) else {}
+    title = (
+        payload.get("title")
+        if isinstance(payload, dict)
+        else None
+    ) or result.get("title") or "Unknown"
 
-    duration_raw = payload.get("duration") or result.get("duration")
+    duration_raw = (
+        payload.get("duration")
+        if isinstance(payload, dict)
+        else None
+    ) or result.get("duration")
     try:
         duration = int(float(duration_raw))
     except (TypeError, ValueError):
@@ -929,10 +1020,6 @@ async def extract_info(url: str) -> dict:
                     )
                     break
 
-        if best_info is not None:
-            cache_analysis(canonical_url, best_info)
-            return best_info
-
         if btch_endpoint:
             payload = _fetch_btch_payload(btch_endpoint, canonical_url)
             fallback_info = _build_info_from_btch(canonical_url, btch_endpoint, payload or {})
@@ -940,6 +1027,10 @@ async def extract_info(url: str) -> dict:
                 cache_analysis(canonical_url, fallback_info)
                 return fallback_info
             attempt_errors.append("btch_fallback: no downloadable media found")
+
+        if best_info is not None:
+            cache_analysis(canonical_url, best_info)
+            return best_info
 
         return {"error": " | ".join(attempt_errors)[:1000]}
 
