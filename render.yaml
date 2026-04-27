@@ -13,3 +13,7 @@ services:
         sync: false
       - key: ADMIN_IDS
         sync: false
+      # Netscape-format cookies after logging into youtube.com (Secret File path on Render).
+      # See README "YouTube on cloud hosting".
+      - key: YTDLP_COOKIEFILE
+        sync: false

@@ -77,11 +77,23 @@ The app also starts a minimal HTTP server for deployment health checks:
 - Temporary downloads are stored in `downloads/` and removed after upload.
 - A sample Render deployment file is included in `render.yaml`.
 - For 24/7 hosting, make sure FFmpeg is available in the runtime environment.
-- If YouTube extraction is unreliable in production, install Node.js and optionally provide a valid cookies file.
+- Install Node.js in production if possible; yt-dlp uses it for some JavaScript-related YouTube challenges.
+
+### YouTube on cloud hosting (Render, VPS, etc.)
+
+Shared hosting IPs are often presented with **“Sign in to confirm you’re not a bot”**. The bot retries several YouTube player clients (`web`, `tv_embedded`, `mweb`, `android`, `ios`), but **without browser cookies many videos will still fail**.
+
+1. Sign in to [YouTube](https://www.youtube.com/) in a desktop browser (same Google account you use normally).
+2. Export **Netscape format** cookies for `youtube.com` (see [yt-dlp: passing cookies](https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp)).
+3. Upload the file to your host and set **`YTDLP_COOKIEFILE`** to its absolute path.
+
+**Render:** Dashboard → your service → *Environment* → *Secret Files* → add the cookies file, then set for example `YTDLP_COOKIEFILE=/etc/secrets/youtube_cookies.txt` (path shown after you create the secret).
+
+Refresh cookies periodically if downloads start failing again.
 
 ## Configuration Summary
 - `BOT_TOKEN` - required
 - `API_ID` - required
 - `API_HASH` - required
 - `ADMIN_IDS` - optional
-- `YTDLP_COOKIEFILE` - optional
+- `YTDLP_COOKIEFILE` - optional but **strongly recommended for YouTube on cloud servers**
