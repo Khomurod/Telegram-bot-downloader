@@ -39,6 +39,12 @@ TRANSLATIONS = {
             "Sorry, I couldn't extract media info from this link. "
             "Please try another link or try again later."
         ),
+        "extract_failed_youtube": (
+            "YouTube is not giving this server any downloadable formats. That usually happens on "
+            "cloud datacenter IPs. The person running the bot must add a Netscape cookie file "
+            "from a browser where you are signed in to YouTube, and set the YTDLP_COOKIEFILE "
+            "environment variable to that file (see the project README)."
+        ),
         "media_found": "Media found!",
         "title_label": "Title",
         "duration_label": "Duration",
@@ -57,6 +63,10 @@ TRANSLATIONS = {
         "queued_hint": "Please keep this chat open — I’ll send the file here when it’s ready.",
         "downloading_media": "Downloading media...",
         "download_failed": "Download failed. Please try again.",
+        "download_failed_youtube_cookies": (
+            "YouTube is blocking this server until a real browser session (cookies) is "
+            "configured. The operator should set YTDLP_COOKIEFILE — see the project README."
+        ),
         "uploading_to_telegram": "Uploading to Telegram...",
         "upload_error": "An error occurred during upload.",
         "file_too_large": "This file is too large to upload to Telegram. Please try a lower quality or audio.",
@@ -106,6 +116,11 @@ TRANSLATIONS = {
             "Kechirasiz, bu havoladan media ma'lumotlarini olib bo'lmadi. "
             "Boshqa havolani yuboring yoki keyinroq qayta urinib ko'ring."
         ),
+        "extract_failed_youtube": (
+            "YouTube ushbu serverga yuklab olish formatlarini bermayapti (odatda bulut IP manzillari). "
+            "Bot egasi brauzerda YouTube'ga kirgan holda Netscape cookie faylini qo‘shishi "
+            "va YTDLP_COOKIEFILE o‘zgaruvchisini o‘rnatishi kerak (README faylida batafsil)."
+        ),
         "media_found": "Media topildi!",
         "title_label": "Nomi",
         "duration_label": "Davomiyligi",
@@ -126,6 +141,10 @@ TRANSLATIONS = {
         "queued_hint": "Iltimos, chatni yopmang — tayyor bo‘lganda shu yerga yuboraman.",
         "downloading_media": "Media yuklab olinmoqda...",
         "download_failed": "Yuklab olish muvaffaqiyatsiz tugadi. Qayta urinib ko'ring.",
+        "download_failed_youtube_cookies": (
+            "YouTube haqiqiy brauzer sessiyasiz (cookies) bu serverdan foydalanishni bloklayapti. "
+            "Operator YTDLP_COOKIEFILE ni sozlashi kerak — README ga qarang."
+        ),
         "uploading_to_telegram": "Telegram'ga yuklanmoqda...",
         "upload_error": "Yuklash vaqtida xatolik yuz berdi.",
         "file_too_large": "Fayl Telegram’ga yuklash uchun juda katta. Pastroq sifat yoki audio tanlang.",
@@ -175,6 +194,11 @@ TRANSLATIONS = {
             "Не удалось получить информацию по этой ссылке. "
             "Попробуйте другую ссылку или повторите попытку позже."
         ),
+        "extract_failed_youtube": (
+            "YouTube не отдаёт этому серверу ни одного скачиваемого формата (часто на облачных IP). "
+            "Владельцу бота нужно добавить файл cookies Netscape из браузера, где вы залогинены "
+            "в YouTube, и задать переменную окружения YTDLP_COOKIEFILE (см. README проекта)."
+        ),
         "media_found": "Медиа найдено!",
         "title_label": "Название",
         "duration_label": "Длительность",
@@ -193,6 +217,10 @@ TRANSLATIONS = {
         "queued_hint": "Пожалуйста, оставайтесь в этом чате — я пришлю файл сюда, когда он будет готов.",
         "downloading_media": "Скачиваю медиа...",
         "download_failed": "Не удалось скачать файл. Попробуйте еще раз.",
+        "download_failed_youtube_cookies": (
+            "YouTube блокирует этот сервер без реальной браузерной сессии (cookies). "
+            "Оператору нужно настроить YTDLP_COOKIEFILE — см. README проекта."
+        ),
         "uploading_to_telegram": "Загружаю в Telegram...",
         "upload_error": "Во время загрузки произошла ошибка.",
         "file_too_large": "Файл слишком большой для загрузки в Telegram. Попробуйте ниже качество или аудио.",

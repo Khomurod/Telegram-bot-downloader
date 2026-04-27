@@ -38,6 +38,34 @@ PREFERRED_VIDEO_EXTENSIONS = {
 FORMAT_SELECTION_CACHE = {}
 ANALYSIS_CACHE = {}
 ANALYSIS_CACHE_LOCK = threading.Lock()
+
+
+def reset_analysis_cache() -> None:
+    """Clear in-memory URL analysis cache (e.g. after deploy)."""
+    with ANALYSIS_CACHE_LOCK:
+        ANALYSIS_CACHE.clear()
+
+
+def log_cookie_configuration() -> None:
+    """Log whether YouTube cookie authentication is configured — critical on cloud IPs."""
+    env_path = os.getenv("YTDLP_COOKIEFILE", "").strip()
+    project_cookie = COOKIE_FILE
+    if env_path:
+        if os.path.isfile(env_path):
+            logger.info("YTDLP_COOKIEFILE is set and readable: %s", env_path)
+        else:
+            logger.warning(
+                "YTDLP_COOKIEFILE points to a missing or unreadable path (%s). "
+                "YouTube downloads will fail with “bot” errors until this file exists on disk.",
+                env_path,
+            )
+    elif os.path.isfile(project_cookie):
+        logger.info("Using bundled cookies file at %s", project_cookie)
+    else:
+        logger.warning(
+            "No cookie file configured (set YTDLP_COOKIEFILE or add cookies.txt). "
+            "YouTube often blocks datacenter IPs unless you pass Netscape cookies from a logged-in browser."
+        )
 # Telegram's maximum upload size via the client API (MTProto).  Files larger
 # than this cannot be sent and should be rejected before we waste bandwidth.
 MAX_FILESIZE_BYTES = 2000 * 1024 * 1024  # 2000 MiB ≈ Telegram client-API limit
@@ -1070,6 +1098,17 @@ async def extract_info(url: str) -> dict:
                 cache_analysis(canonical_url, fallback_info)
                 return fallback_info
             attempt_errors.append("btch_fallback: no downloadable media found")
+
+        # YouTube: do not cache or present “pick quality” UI when zero video formats exist.
+        # Otherwise users see buttons but every download hits the same bot/IP block.
+        if _is_youtube_url(canonical_url):
+            merged = " | ".join(attempt_errors).strip()
+            tail = (
+                "YouTube did not expose any downloadable formats from this server (typical on cloud IPs). "
+                "Export Netscape-format cookies while logged into youtube.com and set YTDLP_COOKIEFILE."
+            )
+            payload_err = (merged + " — " + tail if merged else tail)[:1000]
+            return {"error": payload_err, "__youtube_cookie_hint": True}
 
         if best_info is not None:
             cache_analysis(canonical_url, best_info)

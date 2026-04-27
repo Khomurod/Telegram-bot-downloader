@@ -152,6 +152,14 @@ async def handle_download_callback(client: Client, callback_query: CallbackQuery
                 error_lower = str(download_error).lower()
                 if "filesize" in error_lower or "too large" in error_lower:
                     await callback_query.message.edit_text(t(language_code, "file_too_large"))
+                elif (
+                    "not a bot" in error_lower
+                    or "sign in to confirm" in error_lower
+                    or "login required" in error_lower
+                ):
+                    await callback_query.message.edit_text(
+                        t(language_code, "download_failed_youtube_cookies")
+                    )
                 else:
                     await callback_query.message.edit_text(t(language_code, "download_failed"))
             else:

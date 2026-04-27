@@ -152,9 +152,12 @@ async def handle_link(client: Client, message: Message):
             info.get("error", "No info returned") if info else "No info returned",
         )
         analysis_done["value"] = True
-        await processing_msg.edit_text(
-            t(language_code, "extract_failed")
+        extract_key = (
+            "extract_failed_youtube"
+            if info and info.get("__youtube_cookie_hint")
+            else "extract_failed"
         )
+        await processing_msg.edit_text(t(language_code, extract_key))
         return
 
     title = info.get("title") or t(language_code, "unknown")

@@ -8,6 +8,7 @@ from flask import Flask
 
 from config import API_HASH, API_ID, BOT_TOKEN
 from services.db import init_db
+from services.ytdlp_service import log_cookie_configuration, reset_analysis_cache
 from utils.logger import logger
 
 # Deferred imports and pyrogram initialization
@@ -47,6 +48,9 @@ def _start_health_server() -> None:
 
 
 if __name__ == "__main__":
+    reset_analysis_cache()
+    log_cookie_configuration()
+
     logger.info("Initializing database...")
 
     loop = asyncio.new_event_loop()

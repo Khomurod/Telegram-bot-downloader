@@ -61,6 +61,12 @@ cp .env.example .env
 - `ADMIN_IDS` as a comma-separated list of numeric Telegram user IDs for admin commands
 - `YTDLP_COOKIEFILE` optionally, if you want yt-dlp to use an external cookies file for authenticated or restricted downloads
 
+## Tests
+
+```bash
+python -m unittest discover -s tests -p "test_*.py" -v
+```
+
 ## Running Locally
 Start the bot with:
 
