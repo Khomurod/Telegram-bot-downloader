@@ -10,6 +10,48 @@ from utils.logger import logger
 def is_admin(user_id):
     return user_id in ADMIN_IDS
 
+
+@Client.on_message(filters.command("users") & filters.private)
+async def users_command(client: Client, message: Message):
+    if not is_admin(message.from_user.id):
+        return
+
+    user_id = message.from_user.id
+    language_code = normalize_language_code(await ensure_user_and_get_language(user_id))
+
+    parts = (message.text or "").split(maxsplit=1)
+    limit = 50
+    if len(parts) > 1 and parts[1].isdigit():
+        limit = max(1, min(int(parts[1]), 200))
+
+    db = await get_db()
+    async with db.execute(
+        """
+        SELECT user_id, first_seen, language_code
+        FROM users
+        ORDER BY datetime(first_seen) DESC, user_id DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ) as cursor:
+        rows = await cursor.fetchall()
+
+    if not rows:
+        await message.reply_text("No users found in the database.")
+        return
+
+    lines = [f"Users list (latest {len(rows)}):", ""]
+    for index, row in enumerate(rows, start=1):
+        target_user_id, first_seen, target_language = row
+        lines.append(
+            f"{index}. `{target_user_id}` | {first_seen} | {target_language or language_code}"
+        )
+
+    lines.append("")
+    lines.append(f"Tip: use `/users 100` to show more.")
+    await message.reply_text("\n".join(lines))
+
+
 @Client.on_message(filters.command("stats") & filters.private)
 async def stats_command(client: Client, message: Message):
     if not is_admin(message.from_user.id):
